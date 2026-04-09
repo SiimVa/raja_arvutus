@@ -533,12 +533,14 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
             points = [[lat, lon] for lat, lon in seg["route_coords"]]
         else:
             points = [[start_cp["lat"], start_cp["lon"]], [end_cp["lat"], end_cp["lon"]]]
+        
+        color = "blue" if seg["liikumisviis"] == "tee" else "red"
         popup = (
             f"Lõik {seg['segment_id']}<br>"
             f"Tüüp: {seg['liikumisviis']}<br>"
             f"Kaugus: {seg['kasutatav_kaugus_m']/1000:.2f} km"
         )
-        folium.PolyLine(points, popup=popup).add_to(m)
+        folium.PolyLine(points, color=color, popup=popup).add_to(m)
 
     return m
 
