@@ -530,9 +530,9 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
         start_cp = cp_lookup[seg["algus_kp_id"]]
         end_cp = cp_lookup[seg["lopp_kp_id"]]
         if "route_coords" in seg and seg["route_coords"] is not None:
-            points = seg["route_coords"]
+            points = [[lat, lon] for lat, lon in seg["route_coords"]]
         else:
-            points = [(start_cp["lat"], start_cp["lon"]), (end_cp["lat"], end_cp["lon"])]
+            points = [[start_cp["lat"], start_cp["lon"]], [end_cp["lat"], end_cp["lon"]]]
         popup = (
             f"Lõik {seg['segment_id']}<br>"
             f"Tüüp: {seg['liikumisviis']}<br>"
