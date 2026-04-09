@@ -166,7 +166,7 @@ if "results" in st.session_state:
     st.dataframe(seg_out[[
         "segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis",
         "sirge_kaugus_km", "tee_kaugus_km", "kasutatav_kaugus_km",
-        "kiirus_valges_kmh", "kiirus_pimedas_kmh", "distance_note"
+        "distance_note"
     ]])
 
     st.header("Stardiajad")

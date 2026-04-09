@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from geopy.distance import geodesic
 import mgrs as mgrs_lib
+import folium
 from astral import LocationInfo
 from astral.sun import sun
 
@@ -450,6 +451,18 @@ def format_output_tables(results: dict):
     cp_res = results["checkpoint_results"].copy()
     kp_load = compute_checkpoint_load(results["checkpoint_results"])
 
+    # Lisada start rida kontrollpunktide tabelisse
+    start_row = pd.DataFrame([{
+        "kp_id": 0,
+        "nimi": "Start",
+        "mgrs": "",
+        "kestvus_min": 0,
+        "jarjekord": 0,
+        "lat": cp["lat"].iloc[0] if not cp.empty else 0,
+        "lon": cp["lon"].iloc[0] if not cp.empty else 0
+    }])
+    cp = pd.concat([start_row, cp], ignore_index=True)
+
     for df in [starts, seg_res, cp_res, kp_load]:
         for col in df.columns:
             if "time" in col or "saabumine" in col or "lahkumine" in col or "hetk" in col:
@@ -462,7 +475,7 @@ def format_output_tables(results: dict):
     seg["tee_kaugus_km"] = (seg["tee_kaugus_m"] / 1000).round(2)
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
     seg_res["distance_km"] = (seg_res["distance_m"] / 1000).round(2)
-    seg_res["minutes_total"] = seg_res["minutes_total"].round(1)
+    seg_res["minutes_total"] = seg_res["minutes_total"].apply(lambda x: math.ceil(x / 5) * 5).round(0)
 
     return cp, seg, starts, seg_res, cp_res, kp_load
 
