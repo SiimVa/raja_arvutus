@@ -88,10 +88,10 @@ def compute_sun_times(control_points: pd.DataFrame, race_config: dict) -> dict:
 # DISTANTSIDE LEIDMINE
 # ======================================================
 
-def road_distance_m_osrm(lat1: float, lon1: float, lat2: float, lon2: float, timeout: int = 15) -> Optional[float]:
+def road_distance_m_osrm(lat1: float, lon1: float, lat2: float, lon2: float, timeout: int = 15) -> Optional[Tuple[float, List[Tuple[float, float]]]]:
     url = (
         "https://router.project-osrm.org/route/v1/driving/"
-        f"{lon1},{lat1};{lon2},{lat2}?overview=false"
+        f"{lon1},{lat1};{lon2},{lat2}?overview=full"
     )
     try:
         response = requests.get(url, timeout=timeout)
@@ -99,7 +99,15 @@ def road_distance_m_osrm(lat1: float, lon1: float, lat2: float, lon2: float, tim
         data = response.json()
         routes = data.get("routes", [])
         if routes:
-            return float(routes[0]["distance"])
+            route = routes[0]
+            distance = float(route["distance"])
+            geometry = route.get("geometry", {})
+            if "coordinates" in geometry:
+                coords = [(lat, lon) for lon, lat in geometry["coordinates"]]
+                return distance, coords
+            else:
+                # Fallback to straight line if no geometry
+                return distance, [(lat1, lon1), (lat2, lon2)]
     except Exception:
         return None
     return None
@@ -113,6 +121,7 @@ def calculate_segment_distances(control_points: pd.DataFrame, segments: pd.DataF
     road_distances = []
     used_distances = []
     notes = []
+    route_coords = []
 
     for _, row in seg.iterrows():
         start_cp = cp_lookup[row["algus_kp_id"]]
@@ -122,31 +131,37 @@ def calculate_segment_distances(control_points: pd.DataFrame, segments: pd.DataF
         lat2, lon2 = end_cp["lat"], end_cp["lon"]
 
         straight_m = straight_distance_m(lat1, lon1, lat2, lon2)
-        road_m = None
+        road_result = None
         used_m = None
         note = ""
+        coords = None
 
         if row["liikumisviis"] == "tee":
-            road_m = road_distance_m_osrm(lat1, lon1, lat2, lon2)
-            if road_m is None:
+            road_result = road_distance_m_osrm(lat1, lon1, lat2, lon2)
+            if road_result is None:
                 road_m = straight_m * 1.2
                 note = "OSRM ebaõnnestus, kasutati varuplaani: linnulend * 1.2"
+                coords = [(lat1, lon1), (lat2, lon2)]
             else:
+                road_m, coords = road_result
                 note = "Tee-distants OSRM-ist"
             used_m = road_m
         else:
             used_m = straight_m * 1.5
             note = "Varjatud liikumine: linnulend * 1.5"
+            coords = [(lat1, lon1), (lat2, lon2)]
 
         straight_distances.append(straight_m)
-        road_distances.append(road_m)
+        road_distances.append(road_m if road_result else None)
         used_distances.append(used_m)
         notes.append(note)
+        route_coords.append(coords)
 
     seg["sirge_kaugus_m"] = straight_distances
     seg["tee_kaugus_m"] = road_distances
     seg["kasutatav_kaugus_m"] = used_distances
     seg["distance_note"] = notes
+    seg["route_coords"] = route_coords
     return seg
 
 
@@ -262,13 +277,13 @@ def calculate_segment_end_time(segment_distance_m: float, start_datetime: dateti
 # SIMULATSIOON
 # ======================================================
 
-def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.DataFrame, segments: pd.DataFrame, race_config: dict) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.DataFrame, segments: pd.DataFrame, race_config: dict, start_duration_min: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
     cp_lookup = control_points.set_index("kp_id").to_dict("index")
     seg_sorted = segments.sort_values("segment_id")
 
     segment_rows = []
     checkpoint_rows = []
-    current_time = team_start
+    current_time = team_start + timedelta(minutes=start_duration_min)
 
     for _, seg in seg_sorted.iterrows():
         seg_id = int(seg["segment_id"])
@@ -313,7 +328,7 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
     return pd.DataFrame(segment_rows), pd.DataFrame(checkpoint_rows)
 
 
-def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, race_config: dict) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, race_config: dict, start_duration_min: int) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     start_times_df = generate_team_start_times(race_config)
     all_segment_results = []
     all_checkpoint_results = []
@@ -321,7 +336,7 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
     for _, team_row in start_times_df.iterrows():
         team_id = int(team_row["team_id"])
         team_start = pd.to_datetime(team_row["start_time"])
-        seg_res, cp_res = simulate_team_route(team_id, team_start, control_points, segments, race_config)
+        seg_res, cp_res = simulate_team_route(team_id, team_start, control_points, segments, race_config, start_duration_min)
         all_segment_results.append(seg_res)
         all_checkpoint_results.append(cp_res)
 
@@ -330,7 +345,7 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
     return start_times_df, segment_results_df, checkpoint_results_df
 
 
-def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.DataFrame, race_config: dict, default_speeds: dict, overrides: Dict[int, Dict[str, float]], start_mgrs: str):
+def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.DataFrame, race_config: dict, default_speeds: dict, overrides: Dict[int, Dict[str, float]], start_mgrs: str, start_duration_min: int):
     validate_inputs(control_points_input, segments_input, race_config)
 
     # Lisa start kontrollpunktide hulka
@@ -339,7 +354,7 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
         "kp_id": 0,
         "nimi": "Start",
         "mgrs": start_mgrs,
-        "kestvus_min": 0,
+        "kestvus_min": start_duration_min,
         "jarjekord": 0
     }])
     cp_input = pd.concat([start_row, control_points_input], ignore_index=True)
@@ -351,7 +366,7 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
     seg = calculate_segment_distances(cp, segments_input)
     seg = apply_speeds(seg, default_speeds, overrides)
 
-    start_times_df, segment_results_df, checkpoint_results_df = simulate_all_teams(cp, seg, race_config)
+    start_times_df, segment_results_df, checkpoint_results_df = simulate_all_teams(cp, seg, race_config, start_duration_min)
 
     # Lisa start koordinaadid
     results = {
@@ -514,7 +529,10 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
     for _, seg in segments.iterrows():
         start_cp = cp_lookup[seg["algus_kp_id"]]
         end_cp = cp_lookup[seg["lopp_kp_id"]]
-        points = [(start_cp["lat"], start_cp["lon"]), (end_cp["lat"], end_cp["lon"])]
+        if "route_coords" in seg and seg["route_coords"] is not None:
+            points = seg["route_coords"]
+        else:
+            points = [(start_cp["lat"], start_cp["lon"]), (end_cp["lat"], end_cp["lon"])]
         popup = (
             f"Lõik {seg['segment_id']}<br>"
             f"Tüüp: {seg['liikumisviis']}<br>"

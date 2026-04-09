@@ -81,6 +81,8 @@ seg_text = st.sidebar.text_area(
 # Start koordinaat
 st.sidebar.subheader("Start")
 start_mgrs = st.sidebar.text_input("Start MGRS", value="35VLL2445309927", help="Stardi asukoht MGRS formaadis")
+start_duration_min = st.sidebar.number_input("Start kestus (min)", min_value=0, value=0, help="Aeg stardis enne liikumist")
+start_movement_mode = st.sidebar.selectbox("Start liikumisviis", ["tee", "varjatud"], index=0, help="Kuidas liigutakse stardist KP1-ni")
 
 # Konfiguratsioon
 st.sidebar.subheader("Konfiguratsioon")
@@ -120,6 +122,9 @@ if st.sidebar.button("Arvuta"):
             "segment_id": int, "algus_kp_id": int, "lopp_kp_id": int
         })
 
+        # Muuda esimene segment start liikumisviisiks
+        segments_df.loc[segments_df["segment_id"] == 1, "liikumisviis"] = start_movement_mode
+
         race_config = {
             "esimese_voistkonna_start": start_time,
             "voistkondade_arv": int(team_count),
@@ -140,7 +145,7 @@ if st.sidebar.button("Arvuta"):
                     overrides[int(seg_id)] = {"valge": float(valge), "pime": float(pime)}
 
         # Käivita simulatsioon
-        results = run_full_simulation(control_points_df, segments_df, race_config, DEFAULT_SPEEDS, overrides, start_mgrs)
+        results = run_full_simulation(control_points_df, segments_df, race_config, DEFAULT_SPEEDS, overrides, start_mgrs, start_duration_min)
 
         # Salvesta sessiooni
         st.session_state["results"] = results
