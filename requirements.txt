@@ -1,0 +1,12 @@
+# requirements.txt
+streamlit
+pandas
+numpy
+geopy
+mgrs
+requests
+folium
+streamlit-folium
+openpyxl
+astral
+python-dateutil
