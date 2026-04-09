@@ -77,6 +77,10 @@ seg_text = st.sidebar.text_area(
     height=100,
 )
 
+# Start koordinaat
+st.sidebar.subheader("Start")
+start_mgrs = st.sidebar.text_input("Start MGRS", value="35VLL2445309927", help="Stardi asukoht MGRS formaadis")
+
 # Konfiguratsioon
 st.sidebar.subheader("Konfiguratsioon")
 start_time = st.sidebar.text_input("Esimese võistkonna start", DEFAULT_RACE_CONFIG["esimese_voistkonna_start"])
@@ -135,7 +139,7 @@ if st.sidebar.button("Arvuta"):
                     overrides[int(seg_id)] = {"valge": float(valge), "pime": float(pime)}
 
         # Käivita simulatsioon
-        results = run_full_simulation(control_points_df, segments_df, race_config, DEFAULT_SPEEDS, overrides)
+        results = run_full_simulation(control_points_df, segments_df, race_config, DEFAULT_SPEEDS, overrides, start_mgrs)
 
         # Salvesta sessiooni
         st.session_state["results"] = results
@@ -185,7 +189,7 @@ if "results" in st.session_state:
     st.dataframe(cp_res_out)
 
     st.header("Kaardivaade")
-    m = create_map(results["control_points"], results["segments"])
+    m = create_map(cp_out, results["segments"])
     st_folium(m, width=700, height=500)
 
     # Excel eksport

@@ -337,7 +337,7 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
     return start_times_df, segment_results_df, checkpoint_results_df
 
 
-def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.DataFrame, race_config: dict, default_speeds: dict, overrides: Dict[int, Dict[str, float]]):
+def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.DataFrame, race_config: dict, default_speeds: dict, overrides: Dict[int, Dict[str, float]], start_mgrs: str):
     validate_inputs(control_points_input, segments_input, race_config)
 
     if race_config.get("kasuta_automaatset_paikest", False):
@@ -349,14 +349,19 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
 
     start_times_df, segment_results_df, checkpoint_results_df = simulate_all_teams(cp, seg, race_config)
 
-    return {
+    # Lisa start koordinaadid
+    start_lat, start_lon = mgrs_to_latlon(start_mgrs)
+    results = {
         "race_config": race_config,
         "control_points": cp,
         "segments": seg,
         "start_times": start_times_df,
         "segment_results": segment_results_df,
         "checkpoint_results": checkpoint_results_df,
+        "start_lat": start_lat,
+        "start_lon": start_lon,
     }
+    return results
 
 
 # ======================================================
@@ -458,8 +463,8 @@ def format_output_tables(results: dict):
         "mgrs": "",
         "kestvus_min": 0,
         "jarjekord": 0,
-        "lat": cp["lat"].iloc[0] if not cp.empty else 0,
-        "lon": cp["lon"].iloc[0] if not cp.empty else 0
+        "lat": results["start_lat"],
+        "lon": results["start_lon"]
     }])
     cp = pd.concat([start_row, cp], ignore_index=True)
 
