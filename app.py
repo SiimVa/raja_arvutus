@@ -42,9 +42,10 @@ DEFAULT_CONTROL_POINTS = pd.DataFrame([
 ])
 
 DEFAULT_SEGMENTS = pd.DataFrame([
-    {"segment_id": 1, "algus_kp_id": 1, "lopp_kp_id": 2, "liikumisviis": "tee"},
-    {"segment_id": 2, "algus_kp_id": 2, "lopp_kp_id": 3, "liikumisviis": "varjatud"},
-    {"segment_id": 3, "algus_kp_id": 3, "lopp_kp_id": 4, "liikumisviis": "tee"},
+    {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee"},
+    {"segment_id": 2, "algus_kp_id": 1, "lopp_kp_id": 2, "liikumisviis": "varjatud"},
+    {"segment_id": 3, "algus_kp_id": 2, "lopp_kp_id": 3, "liikumisviis": "tee"},
+    {"segment_id": 4, "algus_kp_id": 3, "lopp_kp_id": 4, "liikumisviis": "tee"},
 ])
 
 # ======================================================

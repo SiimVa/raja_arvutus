@@ -270,17 +270,6 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
     checkpoint_rows = []
     current_time = team_start
 
-    first_segment = seg_sorted.iloc[0]
-    first_kp_id = int(first_segment["algus_kp_id"])
-    checkpoint_rows.append({
-        "team_id": team_id,
-        "kp_id": first_kp_id,
-        "kp_nimi": cp_lookup[first_kp_id]["nimi"],
-        "arrival_time": current_time,
-        "departure_time": current_time + timedelta(minutes=float(cp_lookup[first_kp_id]["kestvus_min"]))
-    })
-    current_time = checkpoint_rows[-1]["departure_time"]
-
     for _, seg in seg_sorted.iterrows():
         seg_id = int(seg["segment_id"])
         start_kp_id = int(seg["algus_kp_id"])
@@ -305,17 +294,21 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
             "minutes_total": minutes_between(seg_start, seg_end),
         })
 
-        kp_duration = float(cp_lookup[end_kp_id]["kestvus_min"])
-        kp_arrival = seg_end
-        kp_departure = kp_arrival + timedelta(minutes=kp_duration)
-        checkpoint_rows.append({
-            "team_id": team_id,
-            "kp_id": end_kp_id,
-            "kp_nimi": cp_lookup[end_kp_id]["nimi"],
-            "arrival_time": kp_arrival,
-            "departure_time": kp_departure
-        })
-        current_time = kp_departure
+        # Lisa kontrollpunkt (va start)
+        if end_kp_id > 0:
+            kp_duration = float(cp_lookup[end_kp_id]["kestvus_min"])
+            kp_arrival = seg_end
+            kp_departure = kp_arrival + timedelta(minutes=kp_duration)
+            checkpoint_rows.append({
+                "team_id": team_id,
+                "kp_id": end_kp_id,
+                "kp_nimi": cp_lookup[end_kp_id]["nimi"],
+                "arrival_time": kp_arrival,
+                "departure_time": kp_departure
+            })
+            current_time = kp_departure
+        else:
+            current_time = seg_end
 
     return pd.DataFrame(segment_rows), pd.DataFrame(checkpoint_rows)
 
@@ -340,17 +333,27 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
 def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.DataFrame, race_config: dict, default_speeds: dict, overrides: Dict[int, Dict[str, float]], start_mgrs: str):
     validate_inputs(control_points_input, segments_input, race_config)
 
-    if race_config.get("kasuta_automaatset_paikest", False):
-        race_config = compute_sun_times(control_points_input, race_config)
+    # Lisa start kontrollpunktide hulka
+    start_lat, start_lon = mgrs_to_latlon(start_mgrs)
+    start_row = pd.DataFrame([{
+        "kp_id": 0,
+        "nimi": "Start",
+        "mgrs": start_mgrs,
+        "kestvus_min": 0,
+        "jarjekord": 0
+    }])
+    cp_input = pd.concat([start_row, control_points_input], ignore_index=True)
 
-    cp = enrich_control_points_with_coordinates(control_points_input)
+    if race_config.get("kasuta_automaatset_paikest", False):
+        race_config = compute_sun_times(cp_input, race_config)
+
+    cp = enrich_control_points_with_coordinates(cp_input)
     seg = calculate_segment_distances(cp, segments_input)
     seg = apply_speeds(seg, default_speeds, overrides)
 
     start_times_df, segment_results_df, checkpoint_results_df = simulate_all_teams(cp, seg, race_config)
 
     # Lisa start koordinaadid
-    start_lat, start_lon = mgrs_to_latlon(start_mgrs)
     results = {
         "race_config": race_config,
         "control_points": cp,
@@ -394,7 +397,7 @@ def validate_inputs(control_points: pd.DataFrame, segments: pd.DataFrame, race_c
         wrong = segments.loc[~segments["liikumisviis"].isin(allowed_modes), "liikumisviis"].tolist()
         raise ValueError(f"Lubatud liikumisviisid on ainult {allowed_modes}. Vigased väärtused: {wrong}")
 
-    existing_kp_ids = set(control_points["kp_id"])
+    existing_kp_ids = set(control_points["kp_id"]) | {0}
     if not segments["algus_kp_id"].isin(existing_kp_ids).all():
         raise ValueError("Kõik algus_kp_id väärtused peavad viitama olemasolevale kontrollpunktile.")
     if not segments["lopp_kp_id"].isin(existing_kp_ids).all():
@@ -455,18 +458,6 @@ def format_output_tables(results: dict):
     seg_res = results["segment_results"].copy()
     cp_res = results["checkpoint_results"].copy()
     kp_load = compute_checkpoint_load(results["checkpoint_results"])
-
-    # Lisada start rida kontrollpunktide tabelisse
-    start_row = pd.DataFrame([{
-        "kp_id": 0,
-        "nimi": "Start",
-        "mgrs": "",
-        "kestvus_min": 0,
-        "jarjekord": 0,
-        "lat": results["start_lat"],
-        "lon": results["start_lon"]
-    }])
-    cp = pd.concat([start_row, cp], ignore_index=True)
 
     for df in [starts, seg_res, cp_res, kp_load]:
         for col in df.columns:
