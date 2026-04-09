@@ -563,7 +563,12 @@ def export_results_to_excel(results: dict) -> bytes:
         kp_load.to_excel(writer, sheet_name="kp_koormus", index=False)
         class_summary.to_excel(writer, sheet_name="valgus_kokkuvote", index=False)
 
-        pd.DataFrame([results["race_config"]]).to_excel(writer, sheet_name="seadistused", index=False)
+        # Formateeri race_config
+        race_config_formatted = results["race_config"].copy()
+        for key, value in race_config_formatted.items():
+            if isinstance(value, datetime):
+                race_config_formatted[key] = value.strftime("%Y-%m-%d %H:%M:%S")
+        pd.DataFrame([race_config_formatted]).to_excel(writer, sheet_name="seadistused", index=False)
 
     output.seek(0)
     return output.getvalue()
