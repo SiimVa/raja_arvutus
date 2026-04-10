@@ -59,7 +59,7 @@ st.sidebar.header("Sisendandmed")
 # Kontrollpunktid
 with st.sidebar:
     st.subheader("Kontrollpunktid")
-    control_points_df = st.experimental_data_editor(
+    control_points_df = st.data_editor(
         DEFAULT_CONTROL_POINTS[["kp_id", "nimi", "mgrs", "kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min", "jarjekord"]],
         num_rows="dynamic",
         use_container_width=True,
@@ -68,7 +68,7 @@ with st.sidebar:
 
     # Lõigud
     st.subheader("Lõigud")
-    segments_df = st.experimental_data_editor(
+    segments_df = st.data_editor(
         DEFAULT_SEGMENTS,
         num_rows="dynamic",
         use_container_width=True,
@@ -77,7 +77,7 @@ with st.sidebar:
 
     # Kiiruste ülekirjutused
     st.subheader("Kiiruste ülekirjutused")
-    overrides_df = st.experimental_data_editor(
+    overrides_df = st.data_editor(
         pd.DataFrame(
             [
                 {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee", "liikumiskiirus": 4.0},
