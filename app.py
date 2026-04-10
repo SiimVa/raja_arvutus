@@ -35,10 +35,10 @@ DEFAULT_SPEEDS = {
 }
 
 DEFAULT_CONTROL_POINTS = pd.DataFrame([
-    {"kp_id": 1, "nimi": "KP1", "mgrs": "35VLL2445309927", "kestvus_min": 15, "jarjekord": 1},
-    {"kp_id": 2, "nimi": "KP2", "mgrs": "35VLL2863210814", "kestvus_min": 15, "jarjekord": 2},
-    {"kp_id": 3, "nimi": "KP3", "mgrs": "35VLL3192511098", "kestvus_min": 30, "jarjekord": 3},
-    {"kp_id": 4, "nimi": "KP4", "mgrs": "35VLL3479411624", "kestvus_min": 20, "jarjekord": 4},
+    {"kp_id": 1, "nimi": "KP1", "mgrs": "35VLL2445309927", "kestvus_ettevalmistus_min": 5, "kestvus_uleanne_min": 7, "kestvus_tagasiside_min": 3, "kestvus_min": 15, "jarjekord": 1},
+    {"kp_id": 2, "nimi": "KP2", "mgrs": "35VLL2863210814", "kestvus_ettevalmistus_min": 5, "kestvus_uleanne_min": 7, "kestvus_tagasiside_min": 3, "kestvus_min": 15, "jarjekord": 2},
+    {"kp_id": 3, "nimi": "KP3", "mgrs": "35VLL3192511098", "kestvus_ettevalmistus_min": 10, "kestvus_uleanne_min": 15, "kestvus_tagasiside_min": 5, "kestvus_min": 30, "jarjekord": 3},
+    {"kp_id": 4, "nimi": "KP4", "mgrs": "35VLL3479411624", "kestvus_ettevalmistus_min": 5, "kestvus_uleanne_min": 10, "kestvus_tagasiside_min": 5, "kestvus_min": 20, "jarjekord": 4},
 ])
 
 DEFAULT_SEGMENTS = pd.DataFrame([
@@ -59,12 +59,12 @@ st.sidebar.header("Sisendandmed")
 # Kontrollpunktid
 st.sidebar.subheader("Kontrollpunktid")
 cp_text = st.sidebar.text_area(
-    "Kontrollpunktid (kp_id;nimi;mgrs;kestvus_min;jarjekord)",
+    "Kontrollpunktid (kp_id;nimi;mgrs;kestvus_ettevalmistus_min;kestvus_uleanne_min;kestvus_tagasiside_min;jarjekord)\nVõib kasutada ka vana formaati: kp_id;nimi;mgrs;kestvus_min;jarjekord",
     value="\n".join(
-        f"{row.kp_id};{row.nimi};{row.mgrs};{row.kestvus_min};{row.jarjekord}"
+        f"{row.kp_id};{row.nimi};{row.mgrs};{row.kestvus_ettevalmistus_min};{row.kestvus_uleanne_min};{row.kestvus_tagasiside_min};{row.jarjekord}"
         for row in DEFAULT_CONTROL_POINTS.itertuples(index=False)
     ),
-    height=150,
+    height=170,
 )
 
 # Lõigud
@@ -110,10 +110,38 @@ if st.sidebar.button("Arvuta"):
         # Parse sisendid
         cp_lines = [line.strip() for line in cp_text.splitlines() if line.strip()]
         cp_rows = [line.split(";") for line in cp_lines]
-        control_points_df = pd.DataFrame(cp_rows, columns=["kp_id", "nimi", "mgrs", "kestvus_min", "jarjekord"])
-        control_points_df = control_points_df.astype({
-            "kp_id": int, "kestvus_min": int, "jarjekord": int
-        })
+        control_points_data = []
+        for row in cp_rows:
+            if len(row) == 5:
+                kp_id, nimi, mgrs, kestvus_min, jarjekord = row
+                control_points_data.append({
+                    "kp_id": int(kp_id),
+                    "nimi": nimi,
+                    "mgrs": mgrs,
+                    "kestvus_min": int(kestvus_min),
+                    "kestvus_ettevalmistus_min": 0,
+                    "kestvus_uleanne_min": int(kestvus_min),
+                    "kestvus_tagasiside_min": 0,
+                    "jarjekord": int(jarjekord),
+                })
+            elif len(row) == 7:
+                kp_id, nimi, mgrs, ette_min, ule_min, tag_min, jarjekord = row
+                ette_min = int(ette_min)
+                ule_min = int(ule_min)
+                tag_min = int(tag_min)
+                control_points_data.append({
+                    "kp_id": int(kp_id),
+                    "nimi": nimi,
+                    "mgrs": mgrs,
+                    "kestvus_min": ette_min + ule_min + tag_min,
+                    "kestvus_ettevalmistus_min": ette_min,
+                    "kestvus_uleanne_min": ule_min,
+                    "kestvus_tagasiside_min": tag_min,
+                    "jarjekord": int(jarjekord),
+                })
+            else:
+                raise ValueError("Kontrollpunkti rida peab olema 5- või 7-väljaga: kp_id;nimi;mgrs;kestvus_min;jarjekord või kp_id;nimi;mgrs;kestvus_ettevalmistus_min;kestvus_uleanne_min;kestvus_tagasiside_min;jarjekord")
+        control_points_df = pd.DataFrame(control_points_data)
 
         seg_lines = [line.strip() for line in seg_text.splitlines() if line.strip()]
         seg_rows = [line.split(";") for line in seg_lines]

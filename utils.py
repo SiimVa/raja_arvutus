@@ -38,6 +38,25 @@ def mgrs_to_latlon(mgrs_code: str) -> Tuple[float, float]:
     return float(lat), float(lon)
 
 
+def normalize_control_point_durations(control_points: pd.DataFrame) -> pd.DataFrame:
+    cp = control_points.copy()
+    detailed_cols = {"kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min"}
+
+    if detailed_cols.issubset(cp.columns):
+        cp["kestvus_min"] = (
+            cp["kestvus_ettevalmistus_min"].fillna(0).astype(float)
+            + cp["kestvus_uleanne_min"].fillna(0).astype(float)
+            + cp["kestvus_tagasiside_min"].fillna(0).astype(float)
+        )
+    elif "kestvus_min" in cp.columns:
+        cp["kestvus_ettevalmistus_min"] = 0
+        cp["kestvus_uleanne_min"] = cp["kestvus_min"].astype(float)
+        cp["kestvus_tagasiside_min"] = 0
+    else:
+        raise ValueError("Kontrollpunktide tabel peab sisaldama kas kestvus_min või kestvus_ettevalmistus_min;kestvus_uleanne_min;kestvus_tagasiside_min")
+    return cp
+
+
 def straight_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return geodesic((lat1, lon1), (lat2, lon2)).meters
 
@@ -360,6 +379,7 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
         "jarjekord": 0
     }])
     cp_input = pd.concat([start_row, control_points_input], ignore_index=True)
+    cp_input = normalize_control_point_durations(cp_input)
 
     if race_config.get("kasuta_automaatset_paikest", False):
         race_config = compute_sun_times(cp_input, race_config)
@@ -389,16 +409,21 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
 # ======================================================
 
 def validate_inputs(control_points: pd.DataFrame, segments: pd.DataFrame, race_config: dict):
-    required_cp = {"kp_id", "nimi", "mgrs", "kestvus_min", "jarjekord"}
+    required_cp = {"kp_id", "nimi", "mgrs", "jarjekord"}
     required_seg = {"segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis"}
 
     if not required_cp.issubset(control_points.columns):
         missing = required_cp - set(control_points.columns)
         raise ValueError(f"Kontrollpunktide tabelist puuduvad veerud: {missing}")
 
+    if not ("kestvus_min" in control_points.columns or {"kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min"}.issubset(control_points.columns)):
+        raise ValueError("Kontrollpunktide tabel peab sisaldama kas kestvus_min või kestvus_ettevalmistus_min;kestvus_uleanne_min;kestvus_tagasiside_min")
+
     if not required_seg.issubset(segments.columns):
         missing = required_seg - set(segments.columns)
         raise ValueError(f"Lõikude tabelist puuduvad veerud: {missing}")
+
+    control_points = normalize_control_point_durations(control_points)
 
     if control_points["kp_id"].duplicated().any():
         raise ValueError("kp_id peab olema unikaalne.")
@@ -408,6 +433,8 @@ def validate_inputs(control_points: pd.DataFrame, segments: pd.DataFrame, race_c
 
     if (control_points["kestvus_min"] < 0).any():
         raise ValueError("Kontrollpunkti kestvus ei tohi olla negatiivne.")
+    if (control_points[["kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min"]].fillna(0) < 0).any().any():
+        raise ValueError("Kontrollpunkti kestvuse alamajad ei tohi olla negatiivsed.")
 
     allowed_modes = {"tee", "varjatud"}
     if not segments["liikumisviis"].isin(allowed_modes).all():
@@ -515,11 +542,18 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
     for _, row in cp.iterrows():
+        duration_text = f"{row['kestvus_min']} min"
+        if all(col in row and pd.notna(row[col]) for col in ["kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min"]):
+            duration_text = (
+                f"{row['kestvus_min']} min (Ettevalmistus: {int(row['kestvus_ettevalmistus_min'])} min, "
+                f"Ülesanne: {int(row['kestvus_uleanne_min'])} min, "
+                f"Tagasiside: {int(row['kestvus_tagasiside_min'])} min)"
+            )
         popup = (
             f"<b>{row['nimi']}</b><br>"
             f"KP ID: {row['kp_id']}<br>"
             f"MGRS: {row['mgrs']}<br>"
-            f"Kestvus: {row['kestvus_min']} min"
+            f"Kestvus: {duration_text}"
         )
         folium.Marker(
             location=[row["lat"], row["lon"]],
