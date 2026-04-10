@@ -219,7 +219,7 @@ if "results" in st.session_state:
     st.dataframe(cp_res_out)
 
     st.header("Kaardivaade")
-    m = create_map(cp_out, results["segments"])
+    m = create_map(cp_out, results["segments"], results["checkpoint_results"], results["segment_results"])
     st_folium(m, width=700, height=500)
 
     # Excel eksport

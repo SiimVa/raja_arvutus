@@ -375,7 +375,9 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
         "kp_id": 0,
         "nimi": "Start",
         "mgrs": start_mgrs,
-        "kestvus_min": start_duration_min,
+        "kestvus_ettevalmistus_min": 0,
+        "kestvus_uleanne_min": start_duration_min,
+        "kestvus_tagasiside_min": 0,
         "jarjekord": 0
     }])
     cp_input = pd.concat([start_row, control_points_input], ignore_index=True)
@@ -534,7 +536,7 @@ def summarize_segment_classifications(segment_results_df: pd.DataFrame) -> pd.Da
 # KAARDIVADE
 # ======================================================
 
-def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
+def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_results: Optional[pd.DataFrame] = None, segment_results: Optional[pd.DataFrame] = None):
     cp = control_points.sort_values("jarjekord").reset_index(drop=True)
     center_lat = cp["lat"].mean()
     center_lon = cp["lon"].mean()
@@ -542,6 +544,7 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
     for _, row in cp.iterrows():
+        kp_id = int(row["kp_id"])
         duration_text = f"{row['kestvus_min']} min"
         if all(col in row and pd.notna(row[col]) for col in ["kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min"]):
             duration_text = (
@@ -549,6 +552,21 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
                 f"Ülesanne: {int(row['kestvus_uleanne_min'])} min, "
                 f"Tagasiside: {int(row['kestvus_tagasiside_min'])} min)"
             )
+        
+        tooltip_text = f"<b>{row['nimi']}</b>"
+        
+        if checkpoint_results is not None and not checkpoint_results.empty:
+            cp_filter = checkpoint_results[checkpoint_results["kp_id"] == kp_id]
+            if not cp_filter.empty:
+                first_arrival = cp_filter["arrival_time"].min()
+                last_departure = cp_filter["departure_time"].max()
+                tooltip_text = f"""<b>{row['nimi']}</b>
+1. võistkonna saabumine: {pd.to_datetime(first_arrival).strftime('%H:%M')}
+Viimase võistkonna lõpetamine: {pd.to_datetime(last_departure).strftime('%H:%M')}
+Ettevalmistus: {int(row.get('kestvus_ettevalmistus_min', 0))} min
+Ülesanne: {int(row.get('kestvus_uleanne_min', 0))} min
+Tagasiside: {int(row.get('kestvus_tagasiside_min', 0))} min"""
+        
         popup = (
             f"<b>{row['nimi']}</b><br>"
             f"KP ID: {row['kp_id']}<br>"
@@ -558,7 +576,7 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
         folium.Marker(
             location=[row["lat"], row["lon"]],
             popup=popup,
-            tooltip=row["nimi"]
+            tooltip=folium.Tooltip(tooltip_text, sticky=False)
         ).add_to(m)
 
     cp_lookup = cp.set_index("kp_id").to_dict("index")
@@ -571,12 +589,30 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame):
             points = [[start_cp["lat"], start_cp["lon"]], [end_cp["lat"], end_cp["lon"]]]
         
         color = "blue" if seg["liikumisviis"] == "tee" else "red"
+        
+        tooltip_text = f"""Lõik {seg['segment_id']}
+Tüüp: {seg['liikumisviis']}
+Distants: {seg['kasutatav_kaugus_m']/1000:.2f} km
+Kiirus päeval: {seg['kiirus_valges_kmh']:.1f} km/h
+Kiirus öösel: {seg['kiirus_pimedas_kmh']:.1f} km/h"""
+        
+        if segment_results is not None and not segment_results.empty:
+            seg_filter = segment_results[segment_results["segment_id"] == seg["segment_id"]]
+            if not seg_filter.empty:
+                first_start = seg_filter["start_time"].min()
+                last_end = seg_filter["end_time"].max()
+                light_class_counts = seg_filter["light_classification"].value_counts().to_dict()
+                light_summary = ", ".join([f"{k}: {v}" for k, v in sorted(light_class_counts.items())])
+                tooltip_text += f"""\n1. võistkonna start: {pd.to_datetime(first_start).strftime('%H:%M')}
+Viimane lõpetab: {pd.to_datetime(last_end).strftime('%H:%M')}
+Valgusklassid: {light_summary}"""
+        
         popup = (
             f"Lõik {seg['segment_id']}<br>"
             f"Tüüp: {seg['liikumisviis']}<br>"
             f"Kaugus: {seg['kasutatav_kaugus_m']/1000:.2f} km"
         )
-        folium.PolyLine(points, color=color, popup=popup).add_to(m)
+        folium.PolyLine(points, color=color, popup=popup, tooltip=folium.Tooltip(tooltip_text, sticky=False)).add_to(m)
 
     return m
 
