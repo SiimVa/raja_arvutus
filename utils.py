@@ -589,6 +589,9 @@ def format_output_tables(results: dict):
     seg["tee_kaugus_km"] = (seg["tee_kaugus_m"] / 1000).round(2)
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
 
+    seg["valgustingimused"] = ""
+    seg["liikumiskiirus"] = ""
+
     segment_lighting = (
         seg_res.groupby("segment_id")["light_classification"]
         .agg(lambda x: sorted(set(x)))
@@ -625,6 +628,8 @@ def format_output_tables(results: dict):
         return f"{row['kiirus_pimedas_kmh']:.1f}"
 
     seg["liikumiskiirus"] = seg.apply(format_speed, axis=1)
+    if "distance_note" not in seg.columns:
+        seg["distance_note"] = ""
 
     segment_summary = (
         seg_res.groupby("segment_id", as_index=False)
