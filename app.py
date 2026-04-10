@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 from streamlit_folium import st_folium
 import folium
+import plotly.express as px
 
 from utils import (
     run_full_simulation,
@@ -190,7 +191,7 @@ if "results" in st.session_state:
         st.write(f"Päikesetõus: {results['race_config']['sunrise_full']}")
         st.write(f"Päikeseloojang: {results['race_config']['sunset_full']}")
 
-    cp_out, seg_out, starts_out, seg_res_out, cp_res_out, kp_load_out, cp_sync_out = format_output_tables(results)
+    cp_out, seg_out, starts_out, seg_res_out, cp_res_out, kp_load_out, cp_sync_out, sync_fig = format_output_tables(results)
     class_summary = summarize_segment_classifications(results["segment_results"])
 
     st.header("Kontrollpunktid")
@@ -214,8 +215,8 @@ if "results" in st.session_state:
     st.header("Kontrollpunktide koormus")
     st.dataframe(kp_load_out)
 
-    st.header("Kontrollpunktide synchronisation matrix")
-    st.dataframe(cp_sync_out)
+    st.header("Kontrollpunktide sünkroniseerimine")
+    st.plotly_chart(sync_fig)
 
     st.header("Võistkondade lõigutulemused")
     st.dataframe(seg_res_out)

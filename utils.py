@@ -10,6 +10,7 @@ import mgrs as mgrs_lib
 import folium
 from astral import LocationInfo
 from astral.sun import sun
+import plotly.express as px
 
 
 # ======================================================
@@ -658,7 +659,21 @@ def format_output_tables(results: dict):
         if col not in seg.columns:
             seg[col] = ""
 
-    return cp, seg, starts, seg_res, cp_res, kp_load, cp_sync
+    return cp, seg, starts, seg_res, cp_res, kp_load, cp_sync, create_sync_diagram(cp_res)
+
+
+def create_sync_diagram(checkpoint_results: pd.DataFrame):
+    df = checkpoint_results.copy()
+    df['Task'] = df.apply(lambda row: f"KP {row['kp_id']} - Võistkond {row['team_id']}", axis=1)
+    df['Start'] = pd.to_datetime(df['arrival_time'])
+    df['Finish'] = pd.to_datetime(df['departure_time'])
+    df['Team'] = df['team_id'].astype(str)
+    
+    fig = px.timeline(df, x_start="Start", x_end="Finish", y="Task", color="Team",
+                      title="Kontrollpunktide sünkroniseerimine")
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(xaxis_title="Aeg", yaxis_title="Kontrollpunkt ja Võistkond")
+    return fig
 
 
 def summarize_segment_classifications(segment_results_df: pd.DataFrame) -> pd.DataFrame:
