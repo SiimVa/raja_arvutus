@@ -200,6 +200,7 @@ if "results" in st.session_state:
     st.dataframe(seg_out[[
         "segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis",
         "sirge_kaugus_km", "tee_kaugus_km", "kasutatav_kaugus_km",
+        "liikumiskiirus", "liikumise aeg täpne (min)", "liikumise aeg ümardatud (min)",
         "distance_note"
     ]])
 

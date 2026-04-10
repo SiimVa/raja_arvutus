@@ -526,6 +526,14 @@ def format_output_tables(results: dict):
     seg["sirge_kaugus_km"] = (seg["sirge_kaugus_m"] / 1000).round(2)
     seg["tee_kaugus_km"] = (seg["tee_kaugus_m"] / 1000).round(2)
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
+    seg["liikumiskiirus"] = seg.apply(
+        lambda row: f"{row['kiirus_valges_kmh']:.1f}/{row['kiirus_pimedas_kmh']:.1f} km/h",
+        axis=1,
+    )
+    seg["liikumise aeg täpne (min)"] = (
+        (seg["kasutatav_kaugus_km"] / seg["kiirus_valges_kmh"]) * 60
+    ).round(2)
+    seg["liikumise aeg ümardatud (min)"] = seg["liikumise aeg täpne (min)"].apply(lambda x: math.ceil(x / 5) * 5)
     seg_res["distance_km"] = (seg_res["distance_m"] / 1000).round(2)
     seg_res["minutes_total"] = seg_res["minutes_total"].apply(lambda x: math.ceil(x / 5) * 5).round(0)
 
