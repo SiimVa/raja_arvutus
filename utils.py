@@ -528,10 +528,8 @@ def format_output_tables(results: dict):
     seg["sirge_kaugus_km"] = (seg["sirge_kaugus_m"] / 1000).round(2)
     seg["tee_kaugus_km"] = (seg["tee_kaugus_m"] / 1000).round(2)
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
-    seg["liikumiskiirus"] = seg.apply(
-        lambda row: f"{row['kiirus_valges_kmh']:.1f}/{row['kiirus_pimedas_kmh']:.1f} km/h",
-        axis=1,
-    )
+    seg["liikumiskiirus_valge_kmh"] = seg["kiirus_valges_kmh"].round(1)
+    seg["liikumiskiirus_pime_kmh"] = seg["kiirus_pimedas_kmh"].round(1)
     segment_summary = (
         seg_res.groupby("segment_id", as_index=False)
         .agg({"exact_minutes": "first", "minutes_total": "first"})
