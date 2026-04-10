@@ -57,35 +57,36 @@ st.title("Võistlusmatka Raja Arvutamise Tööriist")
 st.sidebar.header("Sisendandmed")
 
 # Kontrollpunktid
-st.sidebar.subheader("Kontrollpunktid")
-control_points_df = st.sidebar.experimental_data_editor(
-    DEFAULT_CONTROL_POINTS[["kp_id", "nimi", "mgrs", "kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min", "jarjekord"]],
-    num_rows="dynamic",
-    use_container_width=True,
-    key="control_points_editor",
-)
+with st.sidebar:
+    st.subheader("Kontrollpunktid")
+    control_points_df = st.experimental_data_editor(
+        DEFAULT_CONTROL_POINTS[["kp_id", "nimi", "mgrs", "kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min", "jarjekord"]],
+        num_rows="dynamic",
+        use_container_width=True,
+        key="control_points_editor",
+    )
 
-# Lõigud
-st.sidebar.subheader("Lõigud")
-segments_df = st.sidebar.experimental_data_editor(
-    DEFAULT_SEGMENTS,
-    num_rows="dynamic",
-    use_container_width=True,
-    key="segments_editor",
-)
+    # Lõigud
+    st.subheader("Lõigud")
+    segments_df = st.experimental_data_editor(
+        DEFAULT_SEGMENTS,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="segments_editor",
+    )
 
-# Kiiruste ülekirjutused
-st.sidebar.subheader("Kiiruste ülekirjutused")
-overrides_df = st.sidebar.experimental_data_editor(
-    pd.DataFrame(
-        [
-            {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee", "liikumiskiirus": 4.0},
-        ]
-    ),
-    num_rows="dynamic",
-    use_container_width=True,
-    key="overrides_editor",
-)
+    # Kiiruste ülekirjutused
+    st.subheader("Kiiruste ülekirjutused")
+    overrides_df = st.experimental_data_editor(
+        pd.DataFrame(
+            [
+                {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee", "liikumiskiirus": 4.0},
+            ]
+        ),
+        num_rows="dynamic",
+        use_container_width=True,
+        key="overrides_editor",
+    )
 
 # Start koordinaat
 st.sidebar.subheader("Start")
