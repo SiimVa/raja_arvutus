@@ -91,7 +91,7 @@ def compute_sun_times(control_points: pd.DataFrame, race_config: dict) -> dict:
 def road_distance_m_osrm(lat1: float, lon1: float, lat2: float, lon2: float, timeout: int = 15) -> Optional[Tuple[float, List[Tuple[float, float]]]]:
     url = (
         "https://router.project-osrm.org/route/v1/driving/"
-        f"{lon1},{lat1};{lon2},{lat2}?overview=full"
+        f"{lon1},{lat1};{lon2},{lat2}?overview=full&geometries=geojson"
     )
     try:
         response = requests.get(url, timeout=timeout)
@@ -102,11 +102,13 @@ def road_distance_m_osrm(lat1: float, lon1: float, lat2: float, lon2: float, tim
             route = routes[0]
             distance = float(route["distance"])
             geometry = route.get("geometry", {})
-            if "coordinates" in geometry:
+            if isinstance(geometry, dict) and "coordinates" in geometry:
                 coords = [(lat, lon) for lon, lat in geometry["coordinates"]]
                 return distance, coords
+            elif isinstance(geometry, str):
+                # OSRM may still return an encoded polyline; fallback to direct line
+                return distance, [(lat1, lon1), (lat2, lon2)]
             else:
-                # Fallback to straight line if no geometry
                 return distance, [(lat1, lon1), (lat2, lon2)]
     except Exception:
         return None
