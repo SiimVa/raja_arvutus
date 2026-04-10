@@ -190,7 +190,7 @@ if "results" in st.session_state:
         st.write(f"Päikesetõus: {results['race_config']['sunrise_full']}")
         st.write(f"Päikeseloojang: {results['race_config']['sunset_full']}")
 
-    cp_out, seg_out, starts_out, seg_res_out, cp_res_out, kp_load_out = format_output_tables(results)
+    cp_out, seg_out, starts_out, seg_res_out, cp_res_out, kp_load_out, cp_sync_out = format_output_tables(results)
     class_summary = summarize_segment_classifications(results["segment_results"])
 
     st.header("Kontrollpunktid")
@@ -200,7 +200,7 @@ if "results" in st.session_state:
     st.dataframe(seg_out[[
         "segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis",
         "sirge_kaugus_km", "tee_kaugus_km", "kasutatav_kaugus_km",
-        "liikumiskiirus_valge_kmh", "liikumiskiirus_pime_kmh",
+        "valgustingimused", "liikumiskiirus",
         "liikumise aeg täpne (min)", "liikumise aeg ümardatud (min)",
         "distance_note"
     ]])
@@ -213,6 +213,9 @@ if "results" in st.session_state:
 
     st.header("Kontrollpunktide koormus")
     st.dataframe(kp_load_out)
+
+    st.header("Kontrollpunktide synchronisation matrix")
+    st.dataframe(cp_sync_out)
 
     st.header("Võistkondade lõigutulemused")
     st.dataframe(seg_res_out)

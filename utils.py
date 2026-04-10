@@ -294,6 +294,20 @@ def calculate_segment_end_time(segment_distance_m: float, start_datetime: dateti
     return current_time
 
 
+def calculate_fixed_segment_end_time(segment_distance_m: float, start_datetime: datetime, speed_kmh: float) -> datetime:
+    speed_m_per_min = float(speed_kmh) * 1000.0 / 60.0
+    needed_minutes = float(segment_distance_m) / speed_m_per_min
+    return start_datetime + timedelta(minutes=needed_minutes)
+
+
+def determine_segment_condition(start_datetime: datetime, race_config: dict, team_count: int, interval_minutes: int) -> str:
+    conditions = set()
+    for team_index in [0, team_count - 1] if team_count > 1 else [0]:
+        team_start = start_datetime + timedelta(minutes=team_index * interval_minutes)
+        conditions.add("valge" if is_light(team_start, race_config) else "pime")
+    return conditions.pop() if len(conditions) == 1 else "sega"
+
+
 def round_up_to_next_five_minutes(dt: datetime) -> datetime:
     rounded = dt.replace(second=0, microsecond=0)
     if dt.second != 0 or dt.microsecond != 0 or dt.minute % 5 != 0:
@@ -318,11 +332,10 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
         start_kp_id = int(seg["algus_kp_id"])
         end_kp_id = int(seg["lopp_kp_id"])
         dist_m = float(seg["kasutatav_kaugus_m"])
-        speed_w = float(seg["kiirus_valges_kmh"])
-        speed_d = float(seg["kiirus_pimedas_kmh"])
+        chosen_speed = float(seg["chosen_speed_kmh"])
 
         seg_start = current_time
-        seg_end_exact = calculate_segment_end_time(dist_m, seg_start, speed_w, speed_d, race_config)
+        seg_end_exact = calculate_fixed_segment_end_time(dist_m, seg_start, chosen_speed)
         seg_end = round_up_to_next_five_minutes(seg_end_exact)
         
         classification = classify_interval(seg_start, seg_end, race_config)
@@ -422,6 +435,32 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
     cp = enrich_control_points_with_coordinates(cp_input)
     seg = calculate_segment_distances(cp, segments_input)
     seg = apply_speeds(seg, default_speeds, overrides)
+
+    team_count = int(race_config["voistkondade_arv"])
+    interval = int(race_config["stardi_intervall_min"])
+    reference_start = parse_datetime(race_config["esimese_voistkonna_start"])
+    current_ref_time = reference_start + timedelta(minutes=start_duration_min)
+    cp_lookup = cp.set_index("kp_id").to_dict("index")
+
+    chosen_speeds = []
+    light_conditions = []
+    for _, row in seg.sort_values("segment_id").iterrows():
+        seg_condition = determine_segment_condition(current_ref_time, race_config, team_count, interval)
+        chosen_speed = float(row["kiirus_valges_kmh"] if seg_condition == "valge" else row["kiirus_pimedas_kmh"])
+        chosen_speeds.append(chosen_speed)
+        light_conditions.append(seg_condition)
+
+        seg_end_exact = calculate_fixed_segment_end_time(float(row["kasutatav_kaugus_m"]), current_ref_time, chosen_speed)
+        seg_end = round_up_to_next_five_minutes(seg_end_exact)
+        if int(row["lopp_kp_id"]) > 0:
+            kp_duration = float(cp_lookup[int(row["lopp_kp_id"])]["kestvus_min"])
+            current_ref_time = seg_end + timedelta(minutes=kp_duration)
+        else:
+            current_ref_time = seg_end
+
+    seg = seg.sort_values("segment_id").reset_index(drop=True)
+    seg["chosen_speed_kmh"] = chosen_speeds
+    seg["valgustingimused"] = light_conditions
 
     start_times_df, segment_results_df, checkpoint_results_df = simulate_all_teams(cp, seg, race_config, start_duration_min)
 
@@ -551,8 +590,7 @@ def format_output_tables(results: dict):
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
 
     segment_lighting = (
-        seg_res.groupby("segment_id")
-        ["light_classification"]
+        seg_res.groupby("segment_id")["light_classification"]
         .agg(lambda x: sorted(set(x)))
         .reset_index()
     )
@@ -565,8 +603,10 @@ def format_output_tables(results: dict):
 
     def format_lighting(row):
         lighting_types = row["light_classification"]
-        if "segalõik" in lighting_types:
-            return f"sega ({int(row.get('mixed_team_count', 0))})"
+        if "segalõik" in lighting_types or len(lighting_types) > 1:
+            if "segalõik" in lighting_types:
+                return f"sega ({int(row.get('mixed_team_count', 0))})"
+            return "sega"
         if lighting_types == ["valge"]:
             return "valge"
         if lighting_types == ["pime"]:
@@ -574,18 +614,17 @@ def format_output_tables(results: dict):
         return ", ".join(lighting_types)
 
     segment_lighting = segment_lighting.merge(mixed_counts, on="segment_id", how="left")
-    segment_lighting["liikumiskiirus_valge_kmh"] = segment_lighting.apply(format_lighting, axis=1)
+    segment_lighting["valgustingimused"] = segment_lighting.apply(format_lighting, axis=1)
 
-    seg = seg.merge(segment_lighting[["segment_id", "liikumiskiirus_valge_kmh"]], on="segment_id", how="left")
+    seg = seg.merge(segment_lighting[["segment_id", "valgustingimused"]], on="segment_id", how="left")
 
     def format_speed(row):
-        lighting = row.get("liikumiskiirus_valge_kmh")
+        lighting = row.get("valgustingimused")
         if lighting == "valge":
             return f"{row['kiirus_valges_kmh']:.1f}"
         return f"{row['kiirus_pimedas_kmh']:.1f}"
 
-    seg["liikumiskiirus_pime_kmh"] = seg.apply(format_speed, axis=1)
-
+    seg["liikumiskiirus"] = seg.apply(format_speed, axis=1)
 
     segment_summary = (
         seg_res.groupby("segment_id", as_index=False)
@@ -601,17 +640,33 @@ def format_output_tables(results: dict):
     seg_res["distance_km"] = (seg_res["distance_m"] / 1000).round(2)
     seg_res["minutes_total"] = seg_res["minutes_total"].round(0)
 
-    return cp, seg, starts, seg_res, cp_res, kp_load
+    cp_sync = results["checkpoint_results"].copy()
+    cp_sync["arrival_time"] = pd.to_datetime(cp_sync["arrival_time"]).dt.strftime("%H:%M")
+    cp_sync["departure_time"] = pd.to_datetime(cp_sync["departure_time"]).dt.strftime("%H:%M")
+    cp_sync["time"] = cp_sync["arrival_time"] + "/" + cp_sync["departure_time"]
+    cp_sync = cp_sync.pivot(index="kp_id", columns="team_id", values="time").fillna("")
+    cp_sync = cp_sync.reset_index()
+
+    return cp, seg, starts, seg_res, cp_res, kp_load, cp_sync
 
 
 def summarize_segment_classifications(segment_results_df: pd.DataFrame) -> pd.DataFrame:
-    return (
+    summary = (
         segment_results_df
         .groupby(["segment_id", "light_classification"])
         .size()
         .reset_index(name="team_count")
-        .sort_values(["segment_id", "light_classification"])
     )
+    summary["light_classification"] = summary["light_classification"].replace({"segalõik": "sega"})
+    pivot = summary.pivot(index="segment_id", columns="light_classification", values="team_count").fillna(0).astype(int)
+    pivot = pivot.rename_axis(None, axis=1).reset_index()
+    if "valge" not in pivot.columns:
+        pivot["valge"] = 0
+    if "pime" not in pivot.columns:
+        pivot["pime"] = 0
+    if "sega" not in pivot.columns:
+        pivot["sega"] = 0
+    return pivot[["segment_id", "valge", "pime", "sega"]]
 
 
 # ======================================================
