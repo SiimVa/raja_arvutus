@@ -649,8 +649,14 @@ def format_output_tables(results: dict):
     cp_sync["arrival_time"] = pd.to_datetime(cp_sync["arrival_time"]).dt.strftime("%H:%M")
     cp_sync["departure_time"] = pd.to_datetime(cp_sync["departure_time"]).dt.strftime("%H:%M")
     cp_sync["time"] = cp_sync["arrival_time"] + "/" + cp_sync["departure_time"]
-    cp_sync = cp_sync.pivot(index="kp_id", columns="team_id", values="time").fillna("")
-    cp_sync = cp_sync.reset_index()
+    # Ensure all required columns are present in seg
+    required_seg_cols = [
+        "valgustingimused", "liikumiskiirus", "liikumise aeg täpne (min)", 
+        "liikumise aeg ümardatud (min)", "distance_note"
+    ]
+    for col in required_seg_cols:
+        if col not in seg.columns:
+            seg[col] = ""
 
     return cp, seg, starts, seg_res, cp_res, kp_load, cp_sync
 
