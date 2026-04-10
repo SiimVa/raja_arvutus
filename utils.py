@@ -315,8 +315,14 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
         speed_d = float(seg["kiirus_pimedas_kmh"])
 
         seg_start = current_time
-        seg_end = calculate_segment_end_time(dist_m, seg_start, speed_w, speed_d, race_config)
-        classification = classify_interval(seg_start, seg_end, race_config)
+        seg_end_exact = calculate_segment_end_time(dist_m, seg_start, speed_w, speed_d, race_config)
+        
+        # Ümarda liikumise kestvus 5 minuti täpsusele
+        exact_minutes = minutes_between(seg_start, seg_end_exact)
+        rounded_minutes = math.ceil(exact_minutes / 5) * 5
+        seg_end = seg_start + timedelta(minutes=rounded_minutes)
+        
+        classification = classify_interval(seg_start, seg_end_exact, race_config)
 
         segment_rows.append({
             "team_id": team_id,
@@ -327,7 +333,7 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
             "end_time": seg_end,
             "distance_m": dist_m,
             "light_classification": classification,
-            "minutes_total": minutes_between(seg_start, seg_end),
+            "minutes_total": rounded_minutes,
         })
 
         # Lisa kontrollpunkt (va start)
