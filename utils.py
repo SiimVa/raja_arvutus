@@ -664,15 +664,45 @@ def format_output_tables(results: dict):
 
 def create_sync_diagram(checkpoint_results: pd.DataFrame):
     df = checkpoint_results.copy()
-    df['Task'] = df.apply(lambda row: f"KP {row['kp_id']} - Võistkond {row['team_id']}", axis=1)
     df['Start'] = pd.to_datetime(df['arrival_time'])
     df['Finish'] = pd.to_datetime(df['departure_time'])
     df['Team'] = df['team_id'].astype(str)
-    
-    fig = px.timeline(df, x_start="Start", x_end="Finish", y="Task", color="Team",
-                      title="Kontrollpunktide sünkroniseerimine")
-    fig.update_yaxes(autorange="reversed")
-    fig.update_layout(xaxis_title="Aeg", yaxis_title="Kontrollpunkt ja Võistkond")
+    df['Checkpoint'] = df['kp_id'].astype(str)
+    df['TaskLabel'] = df.apply(lambda row: f"KP {row['kp_id']}", axis=1)
+    df = df.sort_values(['team_id', 'Start'])
+
+    fig = px.timeline(
+        df,
+        x_start="Start",
+        x_end="Finish",
+        y="Team",
+        color="Checkpoint",
+        hover_name="TaskLabel",
+        title="Kontrollpunktide sünkroniseerimine",
+        category_orders={"Team": sorted(df['Team'].unique(), key=lambda x: int(x))}
+    )
+
+    fig.update_yaxes(autorange="reversed", title_text="Võistkond")
+    fig.update_layout(
+        xaxis_title="Aeg",
+        legend_title_text="Kontrollpunkt",
+        plot_bgcolor='white',
+        bargap=0.15,
+        title_x=0.02,
+    )
+    fig.update_xaxes(
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='lightgrey',
+        tickformat='%H:%M',
+        dtick=3600000,
+        minor=dict(
+            showgrid=True,
+            gridwidth=0.5,
+            gridcolor='rgba(200,200,200,0.4)',
+            dtick=300000
+        )
+    )
     return fig
 
 
