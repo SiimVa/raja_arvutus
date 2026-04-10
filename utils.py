@@ -294,6 +294,13 @@ def calculate_segment_end_time(segment_distance_m: float, start_datetime: dateti
     return current_time
 
 
+def round_up_to_next_five_minutes(dt: datetime) -> datetime:
+    rounded = dt.replace(second=0, microsecond=0)
+    if dt.second != 0 or dt.microsecond != 0 or dt.minute % 5 != 0:
+        rounded += timedelta(minutes=(5 - dt.minute % 5))
+    return rounded
+
+
 # ======================================================
 # SIMULATSIOON
 # ======================================================
@@ -316,13 +323,10 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
 
         seg_start = current_time
         seg_end_exact = calculate_segment_end_time(dist_m, seg_start, speed_w, speed_d, race_config)
+        seg_end = round_up_to_next_five_minutes(seg_end_exact)
         
-        # Ümarda liikumise kestvus 5 minuti täpsusele
-        exact_minutes = minutes_between(seg_start, seg_end_exact)
-        rounded_minutes = math.ceil(exact_minutes / 5) * 5
-        seg_end = seg_start + timedelta(minutes=rounded_minutes)
-        
-        classification = classify_interval(seg_start, seg_end_exact, race_config)
+        classification = classify_interval(seg_start, seg_end, race_config)
+        minutes_total = minutes_between(seg_start, seg_end)
 
         segment_rows.append({
             "team_id": team_id,
@@ -333,7 +337,7 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
             "end_time": seg_end,
             "distance_m": dist_m,
             "light_classification": classification,
-            "minutes_total": rounded_minutes,
+            "minutes_total": minutes_total,
         })
 
         # Lisa kontrollpunkt (va start)
@@ -515,7 +519,7 @@ def format_output_tables(results: dict):
         for col in df.columns:
             if "time" in col or "saabumine" in col or "lahkumine" in col or "hetk" in col:
                 try:
-                    df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%d %H:%M:%S")
+                    df[col] = pd.to_datetime(df[col]).dt.strftime("%Y-%m-%d %H:%M")
                 except Exception:
                     pass
 
