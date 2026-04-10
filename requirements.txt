@@ -10,3 +10,4 @@ streamlit-folium
 openpyxl
 astral
 python-dateutil
+plotly
