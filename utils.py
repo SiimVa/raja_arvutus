@@ -614,30 +614,42 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_
                 f"Tagasiside: {int(row['kestvus_tagasiside_min'])} min)"
             )
         
-        tooltip_text = f"<b>{row['nimi']}</b>"
+        tooltip_text = row["nimi"]
         
         if checkpoint_results is not None and not checkpoint_results.empty:
             cp_filter = checkpoint_results[checkpoint_results["kp_id"] == kp_id]
             if not cp_filter.empty:
                 first_arrival = cp_filter["arrival_time"].min()
                 last_departure = cp_filter["departure_time"].max()
-                tooltip_text = f"""<b>{row['nimi']}</b>
-1. võistkonna saabumine: {pd.to_datetime(first_arrival).strftime('%H:%M')}
-Viimase võistkonna lõpetamine: {pd.to_datetime(last_departure).strftime('%H:%M')}
-Ettevalmistus: {int(row.get('kestvus_ettevalmistus_min', 0))} min
-Ülesanne: {int(row.get('kestvus_uleanne_min', 0))} min
-Tagasiside: {int(row.get('kestvus_tagasiside_min', 0))} min"""
-        
-        popup = (
-            f"<b>{row['nimi']}</b><br>"
-            f"KP ID: {row['kp_id']}<br>"
-            f"MGRS: {row['mgrs']}<br>"
-            f"Kestvus: {duration_text}"
-        )
+                popup = (
+                    f"<b>{row['nimi']}</b><br>"
+                    f"KP ID: {row['kp_id']}<br>"
+                    f"MGRS: {row['mgrs']}<br>"
+                    f"1. võistkonna saabumine: {pd.to_datetime(first_arrival).strftime('%H:%M')}<br>"
+                    f"Viimase võistkonna lõpetamine: {pd.to_datetime(last_departure).strftime('%H:%M')}<br>"
+                    f"Ettevalmistus: {int(row.get('kestvus_ettevalmistus_min', 0))} min<br>"
+                    f"Ülesanne: {int(row.get('kestvus_uleanne_min', 0))} min<br>"
+                    f"Tagasiside: {int(row.get('kestvus_tagasiside_min', 0))} min"
+                )
+            else:
+                popup = (
+                    f"<b>{row['nimi']}</b><br>"
+                    f"KP ID: {row['kp_id']}<br>"
+                    f"MGRS: {row['mgrs']}<br>"
+                    f"Kestvus: {duration_text}"
+                )
+        else:
+            popup = (
+                f"<b>{row['nimi']}</b><br>"
+                f"KP ID: {row['kp_id']}<br>"
+                f"MGRS: {row['mgrs']}<br>"
+                f"Kestvus: {duration_text}"
+            )
+
         folium.Marker(
             location=[row["lat"], row["lon"]],
             popup=popup,
-            tooltip=folium.Tooltip(tooltip_text, sticky=False)
+            tooltip=tooltip_text,
         ).add_to(m)
 
     cp_lookup = cp.set_index("kp_id").to_dict("index")
@@ -651,11 +663,15 @@ Tagasiside: {int(row.get('kestvus_tagasiside_min', 0))} min"""
         
         color = "blue" if seg["liikumisviis"] == "tee" else "red"
         
-        tooltip_text = f"""Lõik {seg['segment_id']}
-Tüüp: {seg['liikumisviis']}
-Distants: {seg['kasutatav_kaugus_m']/1000:.2f} km
-Kiirus päeval: {seg['kiirus_valges_kmh']:.1f} km/h
-Kiirus öösel: {seg['kiirus_pimedas_kmh']:.1f} km/h"""
+        tooltip_text = f"Lõik {seg['segment_id']} ({seg['liikumisviis']})"
+        
+        popup = (
+            f"<b>Lõik {seg['segment_id']}</b><br>"
+            f"Tüüp: {seg['liikumisviis']}<br>"
+            f"Kaugus: {seg['kasutatav_kaugus_m']/1000:.2f} km<br>"
+            f"Kiirus päeval: {seg['kiirus_valges_kmh']:.1f} km/h<br>"
+            f"Kiirus öösel: {seg['kiirus_pimedas_kmh']:.1f} km/h"
+        )
         
         if segment_results is not None and not segment_results.empty:
             seg_filter = segment_results[segment_results["segment_id"] == seg["segment_id"]]
@@ -664,16 +680,13 @@ Kiirus öösel: {seg['kiirus_pimedas_kmh']:.1f} km/h"""
                 last_end = seg_filter["end_time"].max()
                 light_class_counts = seg_filter["light_classification"].value_counts().to_dict()
                 light_summary = ", ".join([f"{k}: {v}" for k, v in sorted(light_class_counts.items())])
-                tooltip_text += f"""\n1. võistkonna start: {pd.to_datetime(first_start).strftime('%H:%M')}
-Viimane lõpetab: {pd.to_datetime(last_end).strftime('%H:%M')}
-Valgusklassid: {light_summary}"""
-        
-        popup = (
-            f"Lõik {seg['segment_id']}<br>"
-            f"Tüüp: {seg['liikumisviis']}<br>"
-            f"Kaugus: {seg['kasutatav_kaugus_m']/1000:.2f} km"
-        )
-        folium.PolyLine(points, color=color, popup=popup, tooltip=folium.Tooltip(tooltip_text, sticky=False)).add_to(m)
+                popup += (
+                    f"<br>1. võistkonna start: {pd.to_datetime(first_start).strftime('%H:%M')}"
+                    f"<br>Viimane lõpetab: {pd.to_datetime(last_end).strftime('%H:%M')}"
+                    f"<br>Valgusklassid: {light_summary}"
+                )
+
+        folium.PolyLine(points, color=color, popup=popup, tooltip=tooltip_text).add_to(m)
 
     return m
 
