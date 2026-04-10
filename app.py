@@ -30,8 +30,8 @@ DEFAULT_RACE_CONFIG = {
 }
 
 DEFAULT_SPEEDS = {
-    "tee": {"valge": 5.0, "pime": 4.2},
-    "varjatud": {"valge": 4.0, "pime": 3.0},
+    "tee": {"valge": 4.0, "pime": 3.5},
+    "varjatud": {"valge": 2.0, "pime": 1.5},
 }
 
 DEFAULT_CONTROL_POINTS = pd.DataFrame([
@@ -58,24 +58,33 @@ st.sidebar.header("Sisendandmed")
 
 # Kontrollpunktid
 st.sidebar.subheader("Kontrollpunktid")
-cp_text = st.sidebar.text_area(
-    "Kontrollpunktid (kp_id;nimi;mgrs;kestvus_ettevalmistus_min;kestvus_uleanne_min;kestvus_tagasiside_min;jarjekord)\nVõib kasutada ka vana formaati: kp_id;nimi;mgrs;kestvus_min;jarjekord",
-    value="\n".join(
-        f"{row.kp_id};{row.nimi};{row.mgrs};{row.kestvus_ettevalmistus_min};{row.kestvus_uleanne_min};{row.kestvus_tagasiside_min};{row.jarjekord}"
-        for row in DEFAULT_CONTROL_POINTS.itertuples(index=False)
-    ),
-    height=170,
+control_points_df = st.sidebar.experimental_data_editor(
+    DEFAULT_CONTROL_POINTS[["kp_id", "nimi", "mgrs", "kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min", "jarjekord"]],
+    num_rows="dynamic",
+    use_container_width=True,
+    key="control_points_editor",
 )
 
 # Lõigud
 st.sidebar.subheader("Lõigud")
-seg_text = st.sidebar.text_area(
-    "Lõigud (segment_id;algus_kp_id;lopp_kp_id;liikumisviis)",
-    value="\n".join(
-        f"{row.segment_id};{row.algus_kp_id};{row.lopp_kp_id};{row.liikumisviis}"
-        for row in DEFAULT_SEGMENTS.itertuples(index=False)
+segments_df = st.sidebar.experimental_data_editor(
+    DEFAULT_SEGMENTS,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="segments_editor",
+)
+
+# Kiiruste ülekirjutused
+st.sidebar.subheader("Kiiruste ülekirjutused")
+overrides_df = st.sidebar.experimental_data_editor(
+    pd.DataFrame(
+        [
+            {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee", "liikumiskiirus": 4.0},
+        ]
     ),
-    height=100,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="overrides_editor",
 )
 
 # Start koordinaat
@@ -83,6 +92,15 @@ st.sidebar.subheader("Start")
 start_mgrs = st.sidebar.text_input("Start MGRS", value="35VLL2445309927", help="Stardi asukoht MGRS formaadis")
 start_duration_min = st.sidebar.number_input("Start kestus (min)", min_value=0, value=0, help="Aeg stardis enne liikumist")
 start_movement_mode = st.sidebar.selectbox("Start liikumisviis", ["tee", "varjatud"], index=0, help="Kuidas liigutakse stardist KP1-ni")
+
+st.sidebar.markdown(
+    "**Vaikekiirused:**\n"
+    "- Varjatud päev: 2 km/h\n"
+    "- Varjatud öö: 1.5 km/h\n"
+    "- Tee päev: 4 km/h\n"
+    "- Tee öö: 3.5 km/h\n"
+    "Kui lõik on segalõik, siis arvestatakse automaatselt öökiirusega, kui osa ajast on pimedas."
+)
 
 # Konfiguratsioon
 st.sidebar.subheader("Konfiguratsioon")
@@ -96,62 +114,38 @@ auto_sun = st.sidebar.checkbox("Automaatne päike", value=DEFAULT_RACE_CONFIG["k
 day_start = st.sidebar.text_input("Päeva algus (kui mitte auto)", DEFAULT_RACE_CONFIG["paeva_algus"])
 dark_start = st.sidebar.text_input("Pime algab (kui mitte auto)", DEFAULT_RACE_CONFIG["pimeduse_algus"])
 
-# Kiiruste ülekirjutused
-st.sidebar.subheader("Kiiruste ülekirjutused")
-overrides_text = st.sidebar.text_area(
-    "Ülekirjutused (segment_id;valge;pime)",
-    value="",
-    placeholder="2;3.6;2.8",
-    height=100,
-)
-
 if st.sidebar.button("Arvuta"):
     try:
-        # Parse sisendid
-        cp_lines = [line.strip() for line in cp_text.splitlines() if line.strip()]
-        cp_rows = [line.split(";") for line in cp_lines]
-        control_points_data = []
-        for row in cp_rows:
-            if len(row) == 5:
-                kp_id, nimi, mgrs, kestvus_min, jarjekord = row
-                control_points_data.append({
-                    "kp_id": int(kp_id),
-                    "nimi": nimi,
-                    "mgrs": mgrs,
-                    "kestvus_min": int(kestvus_min),
-                    "kestvus_ettevalmistus_min": 0,
-                    "kestvus_uleanne_min": int(kestvus_min),
-                    "kestvus_tagasiside_min": 0,
-                    "jarjekord": int(jarjekord),
-                })
-            elif len(row) == 7:
-                kp_id, nimi, mgrs, ette_min, ule_min, tag_min, jarjekord = row
-                ette_min = int(ette_min)
-                ule_min = int(ule_min)
-                tag_min = int(tag_min)
-                control_points_data.append({
-                    "kp_id": int(kp_id),
-                    "nimi": nimi,
-                    "mgrs": mgrs,
-                    "kestvus_min": ette_min + ule_min + tag_min,
-                    "kestvus_ettevalmistus_min": ette_min,
-                    "kestvus_uleanne_min": ule_min,
-                    "kestvus_tagasiside_min": tag_min,
-                    "jarjekord": int(jarjekord),
-                })
-            else:
-                raise ValueError("Kontrollpunkti rida peab olema 5- või 7-väljaga: kp_id;nimi;mgrs;kestvus_min;jarjekord või kp_id;nimi;mgrs;kestvus_ettevalmistus_min;kestvus_uleanne_min;kestvus_tagasiside_min;jarjekord")
-        control_points_df = pd.DataFrame(control_points_data)
+        control_points_df = control_points_df.copy()
+        control_points_df = control_points_df.dropna(subset=["kp_id"]) if not control_points_df.empty else control_points_df
+        control_points_df = control_points_df.astype({
+            "kp_id": int,
+            "kestvus_ettevalmistus_min": int,
+            "kestvus_uleanne_min": int,
+            "kestvus_tagasiside_min": int,
+            "jarjekord": int,
+        })
 
-        seg_lines = [line.strip() for line in seg_text.splitlines() if line.strip()]
-        seg_rows = [line.split(";") for line in seg_lines]
-        segments_df = pd.DataFrame(seg_rows, columns=["segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis"])
+        segments_df = segments_df.copy()
+        segments_df = segments_df.dropna(subset=["segment_id"]) if not segments_df.empty else segments_df
         segments_df = segments_df.astype({
-            "segment_id": int, "algus_kp_id": int, "lopp_kp_id": int
+            "segment_id": int,
+            "algus_kp_id": int,
+            "lopp_kp_id": int,
         })
 
         # Muuda esimene segment start liikumisviisiks
         segments_df.loc[segments_df["segment_id"] == 1, "liikumisviis"] = start_movement_mode
+
+        overrides_df_parsed = overrides_df.copy()
+        if not overrides_df_parsed.empty:
+            overrides_df_parsed = overrides_df_parsed.dropna(subset=["segment_id"])
+            overrides_df_parsed = overrides_df_parsed.astype({
+                "segment_id": int,
+                "algus_kp_id": int,
+                "lopp_kp_id": int,
+                "liikumiskiirus": float,
+            })
 
         race_config = {
             "esimese_voistkonna_start": start_time,
@@ -166,11 +160,12 @@ if st.sidebar.button("Arvuta"):
         }
 
         overrides = {}
-        if overrides_text.strip():
-            for line in overrides_text.strip().splitlines():
-                if line.strip():
-                    seg_id, valge, pime = line.split(";")
-                    overrides[int(seg_id)] = {"valge": float(valge), "pime": float(pime)}
+        if not overrides_df_parsed.empty:
+            for _, row in overrides_df_parsed.iterrows():
+                overrides[int(row["segment_id"])] = {
+                    "valge": float(row["liikumiskiirus"]),
+                    "pime": float(row["liikumiskiirus"]),
+                }
 
         # Käivita simulatsioon
         results = run_full_simulation(control_points_df, segments_df, race_config, DEFAULT_SPEEDS, overrides, start_mgrs, start_duration_min)
