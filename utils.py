@@ -366,10 +366,31 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
     all_segment_results = []
     all_checkpoint_results = []
 
+    reference_start = parse_datetime(race_config["esimese_voistkonna_start"])
+    reference_seg_res, reference_cp_res = simulate_team_route(
+        team_id=-1,
+        team_start=reference_start,
+        control_points=control_points,
+        segments=segments,
+        race_config=race_config,
+        start_duration_min=start_duration_min,
+    )
+
     for _, team_row in start_times_df.iterrows():
         team_id = int(team_row["team_id"])
         team_start = pd.to_datetime(team_row["start_time"])
-        seg_res, cp_res = simulate_team_route(team_id, team_start, control_points, segments, race_config, start_duration_min)
+        offset = team_start - reference_start
+
+        seg_res = reference_seg_res.copy()
+        seg_res["team_id"] = team_id
+        seg_res["start_time"] = seg_res["start_time"] + offset
+        seg_res["end_time"] = seg_res["end_time"] + offset
+
+        cp_res = reference_cp_res.copy()
+        cp_res["team_id"] = team_id
+        cp_res["arrival_time"] = cp_res["arrival_time"] + offset
+        cp_res["departure_time"] = cp_res["departure_time"] + offset
+
         all_segment_results.append(seg_res)
         all_checkpoint_results.append(cp_res)
 
