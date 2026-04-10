@@ -561,9 +561,7 @@ def format_output_tables(results: dict):
         lighting = row.get("liikumiskiirus_valge_kmh")
         if lighting == "valge":
             return f"{row['kiirus_valges_kmh']:.1f}"
-        if lighting == "pime":
-            return f"{row['kiirus_pimedas_kmh']:.1f}"
-        return f"{row['kiirus_valges_kmh']:.1f}/{row['kiirus_pimedas_kmh']:.1f}"
+        return f"{row['kiirus_pimedas_kmh']:.1f}"
 
     seg["liikumiskiirus_pime_kmh"] = seg.apply(format_speed, axis=1)
 
