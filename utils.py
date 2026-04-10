@@ -528,8 +528,46 @@ def format_output_tables(results: dict):
     seg["sirge_kaugus_km"] = (seg["sirge_kaugus_m"] / 1000).round(2)
     seg["tee_kaugus_km"] = (seg["tee_kaugus_m"] / 1000).round(2)
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
-    seg["liikumiskiirus_valge_kmh"] = seg["kiirus_valges_kmh"].round(1)
-    seg["liikumiskiirus_pime_kmh"] = seg["kiirus_pimedas_kmh"].round(1)
+
+    segment_lighting = (
+        seg_res.groupby("segment_id")
+        ["light_classification"]
+        .agg(lambda x: sorted(set(x)))
+        .reset_index()
+    )
+    mixed_counts = (
+        seg_res[seg_res["light_classification"] == "segalõik"]
+        .groupby("segment_id")
+        .size()
+        .reset_index(name="mixed_team_count")
+    )
+
+    def format_lighting(row):
+        lighting_types = row["light_classification"]
+        if "segalõik" in lighting_types:
+            return f"sega ({int(row.get('mixed_team_count', 0))})"
+        if lighting_types == ["valge"]:
+            return "valge"
+        if lighting_types == ["pime"]:
+            return "pime"
+        return ", ".join(lighting_types)
+
+    segment_lighting = segment_lighting.merge(mixed_counts, on="segment_id", how="left")
+    segment_lighting["liikumiskiirus_valge_kmh"] = segment_lighting.apply(format_lighting, axis=1)
+
+    seg = seg.merge(segment_lighting[["segment_id", "liikumiskiirus_valge_kmh"]], on="segment_id", how="left")
+
+    def format_speed(row):
+        lighting = row.get("liikumiskiirus_valge_kmh")
+        if lighting == "valge":
+            return f"{row['kiirus_valges_kmh']:.1f}"
+        if lighting == "pime":
+            return f"{row['kiirus_pimedas_kmh']:.1f}"
+        return f"{row['kiirus_valges_kmh']:.1f}/{row['kiirus_pimedas_kmh']:.1f}"
+
+    seg["liikumiskiirus_pime_kmh"] = seg.apply(format_speed, axis=1)
+
+
     segment_summary = (
         seg_res.groupby("segment_id", as_index=False)
         .agg({"exact_minutes": "first", "minutes_total": "first"})
