@@ -326,7 +326,8 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
         seg_end = round_up_to_next_five_minutes(seg_end_exact)
         
         classification = classify_interval(seg_start, seg_end, race_config)
-        minutes_total = minutes_between(seg_start, seg_end)
+        exact_minutes = minutes_between(seg_start, seg_end_exact)
+        rounded_minutes = minutes_between(seg_start, seg_end)
 
         segment_rows.append({
             "team_id": team_id,
@@ -337,7 +338,8 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
             "end_time": seg_end,
             "distance_m": dist_m,
             "light_classification": classification,
-            "minutes_total": minutes_total,
+            "exact_minutes": exact_minutes,
+            "minutes_total": rounded_minutes,
         })
 
         # Lisa kontrollpunkt (va start)
@@ -530,12 +532,19 @@ def format_output_tables(results: dict):
         lambda row: f"{row['kiirus_valges_kmh']:.1f}/{row['kiirus_pimedas_kmh']:.1f} km/h",
         axis=1,
     )
-    seg["liikumise aeg täpne (min)"] = (
-        (seg["kasutatav_kaugus_km"] / seg["kiirus_valges_kmh"]) * 60
-    ).round(2)
-    seg["liikumise aeg ümardatud (min)"] = seg["liikumise aeg täpne (min)"].apply(lambda x: math.ceil(x / 5) * 5)
+    segment_summary = (
+        seg_res.groupby("segment_id", as_index=False)
+        .agg({"exact_minutes": "first", "minutes_total": "first"})
+    )
+    segment_summary["liikumise aeg täpne (min)"] = segment_summary["exact_minutes"].round(2)
+    segment_summary["liikumise aeg ümardatud (min)"] = segment_summary["minutes_total"].round(0)
+    seg = seg.merge(
+        segment_summary[["segment_id", "liikumise aeg täpne (min)", "liikumise aeg ümardatud (min)"]],
+        on="segment_id",
+        how="left",
+    )
     seg_res["distance_km"] = (seg_res["distance_m"] / 1000).round(2)
-    seg_res["minutes_total"] = seg_res["minutes_total"].apply(lambda x: math.ceil(x / 5) * 5).round(0)
+    seg_res["minutes_total"] = seg_res["minutes_total"].round(0)
 
     return cp, seg, starts, seg_res, cp_res, kp_load
 
