@@ -830,6 +830,16 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_
 
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
 
+    if segment_results is not None and not segment_results.empty:
+        if "reaalne_valgustingimus" not in segment_results.columns:
+            segment_results = segment_results.copy()
+            if "light_classification" in segment_results.columns:
+                segment_results["reaalne_valgustingimus"] = segment_results["light_classification"].astype(str)
+            else:
+                segment_results["reaalne_valgustingimus"] = ""
+        else:
+            segment_results = segment_results.copy()
+
     for _, row in cp.iterrows():
         kp_id = int(row["kp_id"])
         duration_text = f"{row['kestvus_min']} min"
@@ -900,17 +910,30 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_
         )
         
         if segment_results is not None and not segment_results.empty:
-            seg_filter = segment_results[segment_results["segment_id"] == seg["segment_id"]]
+            seg_filter = segment_results[segment_results["segment_id"] == seg["segment_id"]].copy()
             if not seg_filter.empty:
-                first_start = seg_filter["start_time"].min()
-                last_end = seg_filter["end_time"].max()
-                light_class_counts = seg_filter["reaalne_valgustingimus"].value_counts().to_dict()
-                light_summary = ", ".join([f"{k}: {v}" for k, v in sorted(light_class_counts.items())])
-                popup += (
-                    f"<br>1. võistkonna start: {pd.to_datetime(first_start).strftime('%H:%M')}"
-                    f"<br>Viimane lõpetab: {pd.to_datetime(last_end).strftime('%H:%M')}"
-                    f"<br>Valgusklassid: {light_summary}"
-                )
+                first_start = seg_filter["start_time"].min() if "start_time" in seg_filter.columns else None
+                last_end = seg_filter["end_time"].max() if "end_time" in seg_filter.columns else None
+                if "reaalne_valgustingimus" not in seg_filter.columns:
+                    if "light_classification" in seg_filter.columns:
+                        seg_filter["reaalne_valgustingimus"] = seg_filter["light_classification"].astype(str)
+                    else:
+                        seg_filter["reaalne_valgustingimus"] = ""
+                try:
+                    light_class_counts = (
+                        seg_filter.loc[seg_filter["reaalne_valgustingimus"].astype(str).ne(""), "reaalne_valgustingimus"]
+                        .value_counts()
+                        .to_dict()
+                    )
+                except KeyError:
+                    light_class_counts = {}
+                if first_start is not None:
+                    popup += f"<br>1. võistkonna start: {pd.to_datetime(first_start).strftime('%H:%M')}"
+                if last_end is not None:
+                    popup += f"<br>Viimane lõpetab: {pd.to_datetime(last_end).strftime('%H:%M')}"
+                if light_class_counts:
+                    light_summary = ", ".join([f"{k}: {v}" for k, v in sorted(light_class_counts.items())])
+                    popup += f"<br>Valgusklassid: {light_summary}"
 
         folium.PolyLine(points, color=color, popup=popup, tooltip=tooltip_text).add_to(m)
 
