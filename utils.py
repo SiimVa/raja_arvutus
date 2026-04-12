@@ -412,7 +412,7 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
         seg_res["start_time"] = seg_res["start_time"] + offset
         seg_res["end_time"] = seg_res["end_time"] + offset
         seg_res = seg_res.merge(
-            segments[["segment_id", "chosen_light_condition"]],
+            segments[["segment_id", "valgustingimused"]].rename(columns={"valgustingimused": "chosen_light_condition"}),
             on="segment_id",
             how="left"
         )
@@ -945,7 +945,7 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_
 # ======================================================
 
 def export_results_to_excel(results: dict) -> bytes:
-    cp, seg, starts, seg_res, cp_res, kp_load = format_output_tables(results)
+    cp, seg, starts, seg_res, cp_res, kp_load, _, _ = format_output_tables(results)
     class_summary = summarize_segment_classifications(results["segment_results"])
 
     from io import BytesIO
