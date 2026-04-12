@@ -595,6 +595,25 @@ def format_output_tables(results: dict):
     cp_res = results["checkpoint_results"].copy()
     kp_load = compute_checkpoint_load(results["checkpoint_results"])
 
+    if "reaalne_valgustingimus" not in seg_res.columns:
+        if "light_classification" in seg_res.columns:
+            seg_res["reaalne_valgustingimus"] = seg_res["light_classification"]
+        elif "start_time" in seg_res.columns and "end_time" in seg_res.columns:
+            race_config = results.get("race_config", {})
+            try:
+                seg_res["reaalne_valgustingimus"] = seg_res.apply(
+                    lambda row: classify_interval(
+                        pd.to_datetime(row["start_time"]),
+                        pd.to_datetime(row["end_time"]),
+                        race_config
+                    ),
+                    axis=1,
+                )
+            except Exception:
+                seg_res["reaalne_valgustingimus"] = ""
+        else:
+            seg_res["reaalne_valgustingimus"] = ""
+
     for df in [starts, seg_res, cp_res, kp_load]:
         for col in df.columns:
             if "time" in col or "saabumine" in col or "lahkumine" in col or "hetk" in col:
