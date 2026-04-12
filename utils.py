@@ -104,6 +104,17 @@ def compute_sun_times(control_points: pd.DataFrame, race_config: dict) -> dict:
     return race_config_out
 
 
+def get_sun_period_datetimes(race_config: dict) -> tuple[datetime, datetime]:
+    if "sunrise_full" in race_config and "sunset_full" in race_config:
+        sunrise = race_config["sunrise_full"]
+        sunset = race_config["sunset_full"]
+    else:
+        race_date = parse_date(race_config["voistluse_kuupaev"])
+        sunrise = datetime.combine(race_date, parse_clock(race_config["paeva_algus"]))
+        sunset = datetime.combine(race_date, parse_clock(race_config["pimeduse_algus"]))
+    return sunrise, sunset
+
+
 # ======================================================
 # DISTANTSIDE LEIDMINE
 # ======================================================
@@ -351,7 +362,7 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
             "start_time": seg_start,
             "end_time": seg_end,
             "distance_m": dist_m,
-            "light_classification": classification,
+            "reaalne_valgustingimus": classification,
             "exact_minutes": exact_minutes,
             "minutes_total": rounded_minutes,
         })
@@ -399,6 +410,11 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
         seg_res["team_id"] = team_id
         seg_res["start_time"] = seg_res["start_time"] + offset
         seg_res["end_time"] = seg_res["end_time"] + offset
+        seg_res = seg_res.merge(
+            segments[["segment_id", "chosen_light_condition"]],
+            on="segment_id",
+            how="left"
+        )
 
         cp_res = reference_cp_res.copy()
         cp_res["team_id"] = team_id
@@ -594,19 +610,19 @@ def format_output_tables(results: dict):
     seg["liikumiskiirus"] = ""
 
     segment_lighting = (
-        seg_res.groupby("segment_id")["light_classification"]
+        seg_res.groupby("segment_id")["reaalne_valgustingimus"]
         .agg(lambda x: sorted(set(x)))
         .reset_index()
     )
     mixed_counts = (
-        seg_res[seg_res["light_classification"] == "segalõik"]
+        seg_res[seg_res["reaalne_valgustingimus"] == "segalõik"]
         .groupby("segment_id")
         .size()
         .reset_index(name="mixed_team_count")
     )
 
     def format_lighting(row):
-        lighting_types = row["light_classification"]
+        lighting_types = row["reaalne_valgustingimus"]
         if "segalõik" in lighting_types or len(lighting_types) > 1:
             if "segalõik" in lighting_types:
                 return f"sega ({int(row.get('mixed_team_count', 0))})"
@@ -659,10 +675,10 @@ def format_output_tables(results: dict):
         if col not in seg.columns:
             seg[col] = ""
 
-    return cp, seg, starts, seg_res, cp_res, kp_load, cp_sync, create_sync_diagram(cp_res)
+    return cp, seg, starts, seg_res, cp_res, kp_load, cp_sync, create_sync_diagram(cp_res, results["race_config"])
 
 
-def create_sync_diagram(checkpoint_results: pd.DataFrame):
+def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
     df = checkpoint_results.copy()
     df['Start'] = pd.to_datetime(df['arrival_time'])
     df['Finish'] = pd.to_datetime(df['departure_time'])
@@ -670,6 +686,12 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame):
     df['Checkpoint'] = df['kp_id'].astype(str)
     df['TaskLabel'] = df.apply(lambda row: f"KP {row['kp_id']}", axis=1)
     df = df.sort_values(['team_id', 'Start'])
+
+    sunrise, sunset = get_sun_period_datetimes(race_config)
+    dawn_start = sunrise - timedelta(hours=1)
+    dusk_end = sunset + timedelta(hours=1)
+    dark_start = sunset + timedelta(hours=1)
+    dark_end = sunrise + timedelta(days=1) - timedelta(hours=1)
 
     fig = px.timeline(
         df,
@@ -695,6 +717,7 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame):
         gridwidth=1,
         gridcolor='lightgrey',
         tickformat='%H:%M',
+        tick0=dawn_start,
         dtick=3600000,
         minor=dict(
             showgrid=True,
@@ -703,18 +726,38 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame):
             dtick=300000
         )
     )
+
+    fig.add_vline(x=sunrise, line=dict(color='goldenrod', width=2, dash='dash'))
+    fig.add_vline(x=sunset, line=dict(color='goldenrod', width=2, dash='dash'))
+    fig.add_annotation(x=sunrise, y=-0.5, text='Päikesetõus', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+    fig.add_annotation(x=sunset, y=-0.5, text='Päikeseloojang', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+
+    fig.add_shape(type='rect', x0=dawn_start, x1=sunrise, y0=-0.5, y1=len(df['Team'].unique()) - 0.5,
+                  fillcolor='rgba(255, 223, 186, 0.18)', line_width=0)
+    fig.add_shape(type='rect', x0=sunset, x1=dusk_end, y0=-0.5, y1=len(df['Team'].unique()) - 0.5,
+                  fillcolor='rgba(255, 223, 186, 0.18)', line_width=0)
+    fig.add_shape(type='rect', x0=dark_start, x1=dark_end, y0=-0.5, y1=len(df['Team'].unique()) - 0.5,
+                  fillcolor='rgba(200, 200, 200, 0.14)', line_width=0)
+
+    fig.add_annotation(x=dawn_start + (sunrise - dawn_start) / 2, y=0, text='Hämar aeg', showarrow=False,
+                       yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
+    fig.add_annotation(x=sunset + (dusk_end - sunset) / 2, y=0, text='Hämar aeg', showarrow=False,
+                       yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
+    fig.add_annotation(x=dark_start + (dark_end - dark_start) / 2, y=0, text='Pime aeg', showarrow=False,
+                       yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
+
     return fig
 
 
 def summarize_segment_classifications(segment_results_df: pd.DataFrame) -> pd.DataFrame:
     summary = (
         segment_results_df
-        .groupby(["segment_id", "light_classification"])
+        .groupby(["segment_id", "reaalne_valgustingimus"])
         .size()
         .reset_index(name="team_count")
     )
-    summary["light_classification"] = summary["light_classification"].replace({"segalõik": "sega"})
-    pivot = summary.pivot(index="segment_id", columns="light_classification", values="team_count").fillna(0).astype(int)
+    summary["reaalne_valgustingimus"] = summary["reaalne_valgustingimus"].replace({"segalõik": "sega"})
+    pivot = summary.pivot(index="segment_id", columns="reaalne_valgustingimus", values="team_count").fillna(0).astype(int)
     pivot = pivot.rename_axis(None, axis=1).reset_index()
     if "valge" not in pivot.columns:
         pivot["valge"] = 0
@@ -810,7 +853,7 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_
             if not seg_filter.empty:
                 first_start = seg_filter["start_time"].min()
                 last_end = seg_filter["end_time"].max()
-                light_class_counts = seg_filter["light_classification"].value_counts().to_dict()
+                light_class_counts = seg_filter["reaalne_valgustingimus"].value_counts().to_dict()
                 light_summary = ", ".join([f"{k}: {v}" for k, v in sorted(light_class_counts.items())])
                 popup += (
                     f"<br>1. võistkonna start: {pd.to_datetime(first_start).strftime('%H:%M')}"

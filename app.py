@@ -219,7 +219,15 @@ if "results" in st.session_state:
     st.plotly_chart(sync_fig)
 
     st.header("Võistkondade lõigutulemused")
-    st.dataframe(seg_res_out)
+    seg_res_display = seg_res_out.copy()
+    display_columns = [
+        "team_id", "segment_id", "algus_kp_id", "lopp_kp_id",
+        "start_time", "end_time", "distance_m",
+        "reaalne_valgustingimus", "chosen_light_condition",
+        "exact_minutes", "minutes_total", "distance_km"
+    ]
+    display_columns = [col for col in display_columns if col in seg_res_display.columns]
+    st.dataframe(seg_res_display[display_columns])
 
     st.header("Võistkondade KP ajad")
     st.dataframe(cp_res_out)
