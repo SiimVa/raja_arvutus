@@ -11,8 +11,6 @@ from utils import (
     summarize_segment_classifications,
     create_map,
     export_results_to_excel,
-    export_variant1,
-    export_variant2,
     validate_inputs,
 )
 
@@ -247,18 +245,26 @@ if "results" in st.session_state:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    variant1_data = export_variant1(results)
-    st.download_button(
-        label="Laadi alla Variant 1 (iga VK eraldi)",
-        data=variant1_data,
-        file_name="variant1_iga_vk_eraldi.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    try:
+        from utils import export_variant1
+        variant1_data = export_variant1(results)
+        st.download_button(
+            label="Laadi alla Variant 1 (iga VK eraldi)",
+            data=variant1_data,
+            file_name="variant1_iga_vk_eraldi.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except ImportError:
+        st.warning("Variant 1 eksport ei ole saadaval.")
 
-    variant2_data = export_variant2(results)
-    st.download_button(
-        label="Laadi alla Variant 2 (KP-de kaupa)",
-        data=variant2_data,
-        file_name="variant2_kp_de_kaupa.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    try:
+        from utils import export_variant2
+        variant2_data = export_variant2(results)
+        st.download_button(
+            label="Laadi alla Variant 2 (KP-de kaupa)",
+            data=variant2_data,
+            file_name="variant2_kp_de_kaupa.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except ImportError:
+        st.warning("Variant 2 eksport ei ole saadaval.")
