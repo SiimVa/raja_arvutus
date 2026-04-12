@@ -789,14 +789,26 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
 
 
 def summarize_segment_classifications(segment_results_df: pd.DataFrame) -> pd.DataFrame:
+    df = segment_results_df.copy()
+    if "reaalne_valgustingimus" not in df.columns:
+        if "light_classification" in df.columns:
+            df["reaalne_valgustingimus"] = df["light_classification"]
+        else:
+            df["reaalne_valgustingimus"] = ""
+
     summary = (
-        segment_results_df
+        df
         .groupby(["segment_id", "reaalne_valgustingimus"])
         .size()
         .reset_index(name="team_count")
     )
     summary["reaalne_valgustingimus"] = summary["reaalne_valgustingimus"].replace({"segalõik": "sega"})
-    pivot = summary.pivot(index="segment_id", columns="reaalne_valgustingimus", values="team_count").fillna(0).astype(int)
+    pivot = summary.pivot(index="segment_id", columns="reaalne_valgustingimus", values="team_count").fillna(0)
+    if not pivot.empty:
+        try:
+            pivot = pivot.astype(int)
+        except Exception:
+            pass
     pivot = pivot.rename_axis(None, axis=1).reset_index()
     if "valge" not in pivot.columns:
         pivot["valge"] = 0
