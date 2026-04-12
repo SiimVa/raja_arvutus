@@ -11,6 +11,8 @@ from utils import (
     summarize_segment_classifications,
     create_map,
     export_results_to_excel,
+    export_variant1,
+    export_variant2,
     validate_inputs,
 )
 
@@ -239,8 +241,24 @@ if "results" in st.session_state:
     # Excel eksport
     excel_data = export_results_to_excel(results)
     st.download_button(
-        label="Laadi alla Excel",
+        label="Laadi alla Excel (täielik)",
         data=excel_data,
         file_name="raja_tulemused.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    variant1_data = export_variant1(results)
+    st.download_button(
+        label="Laadi alla Variant 1 (iga VK eraldi)",
+        data=variant1_data,
+        file_name="variant1_iga_vk_eraldi.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    variant2_data = export_variant2(results)
+    st.download_button(
+        label="Laadi alla Variant 2 (KP-de kaupa)",
+        data=variant2_data,
+        file_name="variant2_kp_de_kaupa.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )

@@ -971,6 +971,38 @@ def export_results_to_excel(results: dict) -> bytes:
     return output.getvalue()
 
 
+def export_variant1(results: dict) -> bytes:
+    """Variant 1: Iga võistkonna eraldi leht segment_results'iga"""
+    from io import BytesIO
+    output = BytesIO()
+
+    seg_res = format_output_tables(results)[3]  # seg_res_out
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for team_id in sorted(seg_res["team_id"].unique()):
+            team_data = seg_res[seg_res["team_id"] == team_id]
+            team_data.to_excel(writer, sheet_name=f"VK_{team_id}", index=False)
+
+    output.seek(0)
+    return output.getvalue()
+
+
+def export_variant2(results: dict) -> bytes:
+    """Variant 2: Iga KP eraldi leht checkpoint_results'iga"""
+    from io import BytesIO
+    output = BytesIO()
+
+    cp_res = format_output_tables(results)[4]  # cp_res_out
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for kp_id in sorted(cp_res["kp_id"].unique()):
+            kp_data = cp_res[cp_res["kp_id"] == kp_id]
+            kp_data.to_excel(writer, sheet_name=f"KP_{kp_id}", index=False)
+
+    output.seek(0)
+    return output.getvalue()
+
+
 # ======================================================
 # MUUTMISFUNKTSIOONID
 # ======================================================
