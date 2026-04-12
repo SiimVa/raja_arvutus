@@ -11,6 +11,7 @@ import folium
 from astral import LocationInfo
 from astral.sun import sun
 import plotly.express as px
+import plotly.graph_objects as go
 
 
 # ======================================================
@@ -745,6 +746,25 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
                        yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
     fig.add_annotation(x=dark_start + (dark_end - dark_start) / 2, y=0, text='Pime aeg', showarrow=False,
                        yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
+
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color='rgba(255, 223, 186, 0.5)'),
+        legendgroup='twilight',
+        name='Hämar aeg',
+        showlegend=True,
+        hoverinfo='none'
+    ))
+    fig.add_trace(go.Scatter(
+        x=[None], y=[None],
+        mode='markers',
+        marker=dict(size=10, color='rgba(200, 200, 200, 0.5)'),
+        legendgroup='dark',
+        name='Pime aeg',
+        showlegend=True,
+        hoverinfo='none'
+    ))
 
     return fig
 
