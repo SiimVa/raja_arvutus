@@ -280,7 +280,7 @@ def classify_interval(start_dt: datetime, end_dt: datetime, race_config: dict) -
 
     if end_dt <= boundary and start_light == end_light:
         return "valge" if start_light else "pime"
-    return "segalõik"
+    return "sega"
 
 
 def calculate_segment_end_time(segment_distance_m: float, start_datetime: datetime, speed_white_kmh: float, speed_dark_kmh: float, race_config: dict) -> datetime:
@@ -311,6 +311,15 @@ def calculate_fixed_segment_end_time(segment_distance_m: float, start_datetime: 
     speed_m_per_min = float(speed_kmh) * 1000.0 / 60.0
     needed_minutes = float(segment_distance_m) / speed_m_per_min
     return start_datetime + timedelta(minutes=needed_minutes)
+
+
+def calculate_segment_minutes(segment_distance_m: float, speed_kmh: float) -> float:
+    speed_m_per_min = float(speed_kmh) * 1000.0 / 60.0
+    return float(segment_distance_m) / speed_m_per_min
+
+
+def round_up_minutes_to_next_five(minutes: float) -> float:
+    return float(math.ceil(float(minutes) / 5.0) * 5)
 
 
 def determine_segment_condition(start_datetime: datetime, race_config: dict, team_count: int, interval_minutes: int) -> str:
@@ -345,15 +354,14 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
         start_kp_id = int(seg["algus_kp_id"])
         end_kp_id = int(seg["lopp_kp_id"])
         dist_m = float(seg["kasutatav_kaugus_m"])
-        chosen_speed = float(seg["chosen_speed_kmh"])
+        exact_segment_minutes = float(seg["exact_segment_minutes"])
+        rounded_segment_minutes = float(seg["rounded_segment_minutes"])
 
         seg_start = current_time
-        seg_end_exact = calculate_fixed_segment_end_time(dist_m, seg_start, chosen_speed)
-        seg_end = round_up_to_next_five_minutes(seg_end_exact)
+        seg_end_exact = seg_start + timedelta(minutes=exact_segment_minutes)
+        seg_end = seg_start + timedelta(minutes=rounded_segment_minutes)
         
         classification = classify_interval(seg_start, seg_end, race_config)
-        exact_minutes = minutes_between(seg_start, seg_end_exact)
-        rounded_minutes = minutes_between(seg_start, seg_end)
 
         segment_rows.append({
             "team_id": team_id,
@@ -364,8 +372,8 @@ def simulate_team_route(team_id: int, team_start: datetime, control_points: pd.D
             "end_time": seg_end,
             "distance_m": dist_m,
             "reaalne_valgustingimus": classification,
-            "exact_minutes": exact_minutes,
-            "minutes_total": rounded_minutes,
+            "exact_minutes": exact_segment_minutes,
+            "minutes_total": rounded_segment_minutes,
         })
 
         # Lisa kontrollpunkt (va start)
@@ -442,31 +450,61 @@ def run_full_simulation(control_points_input: pd.DataFrame, segments_input: pd.D
     seg = calculate_segment_distances(cp, segments_input)
     seg = apply_speeds(seg, default_speeds, overrides)
 
-    team_count = int(race_config["voistkondade_arv"])
-    interval = int(race_config["stardi_intervall_min"])
-    reference_start = parse_datetime(race_config["esimese_voistkonna_start"])
-    current_ref_time = reference_start + timedelta(minutes=start_duration_min)
+    start_times_df = generate_team_start_times(race_config)
+    current_team_times = [
+        pd.to_datetime(start_time).to_pydatetime() + timedelta(minutes=start_duration_min)
+        for start_time in start_times_df["start_time"]
+    ]
     cp_lookup = cp.set_index("kp_id").to_dict("index")
 
     chosen_speeds = []
     light_conditions = []
+    exact_segment_minutes = []
+    rounded_segment_minutes = []
     for _, row in seg.sort_values("segment_id").iterrows():
-        seg_condition = determine_segment_condition(current_ref_time, race_config, team_count, interval)
-        chosen_speed = float(row["kiirus_valges_kmh"] if seg_condition == "valge" else row["kiirus_pimedas_kmh"])
+        dist_m = float(row["kasutatav_kaugus_m"])
+        white_speed = float(row["kiirus_valges_kmh"])
+        dark_speed = float(row["kiirus_pimedas_kmh"])
+
+        white_exact_minutes = calculate_segment_minutes(dist_m, white_speed)
+        white_rounded_minutes = round_up_minutes_to_next_five(white_exact_minutes)
+        white_classifications = [
+            classify_interval(team_time, team_time + timedelta(minutes=white_rounded_minutes), race_config)
+            for team_time in current_team_times
+        ]
+
+        if all(classification == "valge" for classification in white_classifications):
+            seg_condition = "valge"
+            chosen_speed = white_speed
+            exact_minutes = white_exact_minutes
+            rounded_minutes = white_rounded_minutes
+        else:
+            seg_condition = "pime"
+            chosen_speed = dark_speed
+            exact_minutes = calculate_segment_minutes(dist_m, dark_speed)
+            rounded_minutes = round_up_minutes_to_next_five(exact_minutes)
+
         chosen_speeds.append(chosen_speed)
         light_conditions.append(seg_condition)
+        exact_segment_minutes.append(exact_minutes)
+        rounded_segment_minutes.append(rounded_minutes)
 
-        seg_end_exact = calculate_fixed_segment_end_time(float(row["kasutatav_kaugus_m"]), current_ref_time, chosen_speed)
-        seg_end = round_up_to_next_five_minutes(seg_end_exact)
+        seg_duration = timedelta(minutes=rounded_minutes)
         if int(row["lopp_kp_id"]) > 0:
             kp_duration = float(cp_lookup[int(row["lopp_kp_id"])]["kestvus_min"])
-            current_ref_time = seg_end + timedelta(minutes=kp_duration)
+            stop_duration = timedelta(minutes=kp_duration)
         else:
-            current_ref_time = seg_end
+            stop_duration = timedelta(0)
+        current_team_times = [
+            team_time + seg_duration + stop_duration
+            for team_time in current_team_times
+        ]
 
     seg = seg.sort_values("segment_id").reset_index(drop=True)
     seg["chosen_speed_kmh"] = chosen_speeds
     seg["valgustingimused"] = light_conditions
+    seg["exact_segment_minutes"] = exact_segment_minutes
+    seg["rounded_segment_minutes"] = rounded_segment_minutes
 
     start_times_df, segment_results_df, checkpoint_results_df = simulate_all_teams(cp, seg, race_config, start_duration_min)
 
@@ -641,7 +679,7 @@ def format_output_tables(results: dict):
         .reset_index()
     )
     mixed_counts = (
-        seg_res[seg_res["reaalne_valgustingimus"] == "segalõik"]
+        seg_res[seg_res["reaalne_valgustingimus"].isin(["sega", "segalõik"])]
         .groupby("segment_id")
         .size()
         .reset_index(name="mixed_team_count")
@@ -649,8 +687,8 @@ def format_output_tables(results: dict):
 
     def format_lighting(row):
         lighting_types = row["reaalne_valgustingimus"]
-        if "segalõik" in lighting_types or len(lighting_types) > 1:
-            if "segalõik" in lighting_types:
+        if "sega" in lighting_types or "segalõik" in lighting_types or len(lighting_types) > 1:
+            if "sega" in lighting_types or "segalõik" in lighting_types:
                 return f"sega ({int(row.get('mixed_team_count', 0))})"
             return "sega"
         if lighting_types == ["valge"]:
@@ -715,6 +753,9 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
     df = df.sort_values(['team_id', 'Start'])
 
     sunrise, sunset = get_sun_period_datetimes(race_config)
+    start_times = generate_team_start_times(race_config)
+    timeline_start = pd.to_datetime(start_times["start_time"]).min().to_pydatetime() - timedelta(hours=1)
+    timeline_end = df["Finish"].max().to_pydatetime() + timedelta(hours=1)
     dawn_start = sunrise - timedelta(hours=1)
     dusk_end = sunset + timedelta(hours=1)
     dark_start = sunset + timedelta(hours=1)
@@ -744,7 +785,8 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
         gridwidth=1,
         gridcolor='lightgrey',
         tickformat='%H:%M',
-        tick0=dawn_start,
+        range=[timeline_start, timeline_end],
+        tick0=timeline_start,
         dtick=3600000,
         minor=dict(
             showgrid=True,
