@@ -9,7 +9,7 @@ from geopy.distance import geodesic
 import mgrs as mgrs_lib
 import folium
 from astral import LocationInfo
-from astral.sun import sun
+from astral.sun import sun, sunrise as astral_sunrise, sunset as astral_sunset
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -114,6 +114,25 @@ def get_sun_period_datetimes(race_config: dict) -> tuple[datetime, datetime]:
         sunrise = datetime.combine(race_date, parse_clock(race_config["paeva_algus"]))
         sunset = datetime.combine(race_date, parse_clock(race_config["pimeduse_algus"]))
     return sunrise, sunset
+
+
+def get_sun_period_datetimes_for_date(race_config: dict, target_date: date) -> tuple[datetime, datetime]:
+    timezone_name = race_config.get("timezone", "Europe/Tallinn")
+    if "reference_lat" in race_config and "reference_lon" in race_config:
+        location = LocationInfo(
+            name="RaceArea",
+            region="",
+            timezone=timezone_name,
+            latitude=float(race_config["reference_lat"]),
+            longitude=float(race_config["reference_lon"]),
+        )
+        sunrise_dt = astral_sunrise(location.observer, date=target_date, tzinfo=timezone_name)
+        sunset_dt = astral_sunset(location.observer, date=target_date, tzinfo=timezone_name)
+        return sunrise_dt.replace(tzinfo=None), sunset_dt.replace(tzinfo=None)
+
+    sunrise_time = parse_clock(race_config["paeva_algus"])
+    sunset_time = parse_clock(race_config["pimeduse_algus"])
+    return datetime.combine(target_date, sunrise_time), datetime.combine(target_date, sunset_time)
 
 
 # ======================================================
@@ -752,14 +771,9 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
     df['TaskLabel'] = df.apply(lambda row: f"KP {row['kp_id']}", axis=1)
     df = df.sort_values(['team_id', 'Start'])
 
-    sunrise, sunset = get_sun_period_datetimes(race_config)
     start_times = generate_team_start_times(race_config)
     timeline_start = pd.to_datetime(start_times["start_time"]).min().to_pydatetime() - timedelta(hours=1)
     timeline_end = df["Finish"].max().to_pydatetime() + timedelta(hours=1)
-    dawn_start = sunrise - timedelta(hours=1)
-    dusk_end = sunset + timedelta(hours=1)
-    dark_start = sunset + timedelta(hours=1)
-    dark_end = sunrise + timedelta(days=1) - timedelta(hours=1)
 
     fig = px.timeline(
         df,
@@ -796,24 +810,46 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
         )
     )
 
-    fig.add_vline(x=sunrise, line=dict(color='goldenrod', width=2, dash='dash'))
-    fig.add_vline(x=sunset, line=dict(color='goldenrod', width=2, dash='dash'))
-    fig.add_annotation(x=sunrise, y=-0.5, text='Päikesetõus', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
-    fig.add_annotation(x=sunset, y=-0.5, text='Päikeseloojang', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+    y1 = len(df['Team'].unique()) - 0.5
 
-    fig.add_shape(type='rect', x0=dawn_start, x1=sunrise, y0=-0.5, y1=len(df['Team'].unique()) - 0.5,
-                  fillcolor='rgba(255, 223, 186, 0.18)', line_width=0)
-    fig.add_shape(type='rect', x0=sunset, x1=dusk_end, y0=-0.5, y1=len(df['Team'].unique()) - 0.5,
-                  fillcolor='rgba(255, 223, 186, 0.18)', line_width=0)
-    fig.add_shape(type='rect', x0=dark_start, x1=dark_end, y0=-0.5, y1=len(df['Team'].unique()) - 0.5,
-                  fillcolor='rgba(200, 200, 200, 0.14)', line_width=0)
+    def add_period_shape(period_start, period_end, fillcolor, label):
+        x0 = max(period_start, timeline_start)
+        x1 = min(period_end, timeline_end)
+        if x0 >= x1:
+            return
+        fig.add_shape(type='rect', x0=x0, x1=x1, y0=-0.5, y1=y1, fillcolor=fillcolor, line_width=0)
+        fig.add_annotation(
+            x=x0 + (x1 - x0) / 2,
+            y=0,
+            text=label,
+            showarrow=False,
+            yanchor='bottom',
+            font=dict(color='black', size=10),
+            bgcolor='rgba(255,255,255,0.5)'
+        )
 
-    fig.add_annotation(x=dawn_start + (sunrise - dawn_start) / 2, y=0, text='Hämar aeg', showarrow=False,
-                       yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
-    fig.add_annotation(x=sunset + (dusk_end - sunset) / 2, y=0, text='Hämar aeg', showarrow=False,
-                       yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
-    fig.add_annotation(x=dark_start + (dark_end - dark_start) / 2, y=0, text='Pime aeg', showarrow=False,
-                       yanchor='bottom', font=dict(color='black', size=10), bgcolor='rgba(255,255,255,0.5)')
+    current_date = timeline_start.date() - timedelta(days=1)
+    last_date = timeline_end.date() + timedelta(days=1)
+    while current_date <= last_date:
+        sunrise, sunset = get_sun_period_datetimes_for_date(race_config, current_date)
+        next_sunrise, _ = get_sun_period_datetimes_for_date(race_config, current_date + timedelta(days=1))
+        dawn_start = sunrise - timedelta(hours=1)
+        dusk_end = sunset + timedelta(hours=1)
+        dark_start = dusk_end
+        dark_end = next_sunrise - timedelta(hours=1)
+
+        add_period_shape(dawn_start, sunrise, 'rgba(255, 223, 186, 0.18)', 'Hommikune hämar aeg')
+        add_period_shape(sunset, dusk_end, 'rgba(255, 223, 186, 0.18)', 'Hämar aeg')
+        add_period_shape(dark_start, dark_end, 'rgba(200, 200, 200, 0.14)', 'Pime aeg')
+
+        if timeline_start <= sunrise <= timeline_end:
+            fig.add_vline(x=sunrise, line=dict(color='goldenrod', width=2, dash='dash'))
+            fig.add_annotation(x=sunrise, y=-0.5, text='Päikesetõus', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+        if timeline_start <= sunset <= timeline_end:
+            fig.add_vline(x=sunset, line=dict(color='goldenrod', width=2, dash='dash'))
+            fig.add_annotation(x=sunset, y=-0.5, text='Päikeseloojang', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+
+        current_date += timedelta(days=1)
 
     fig.add_trace(go.Scatter(
         x=[None], y=[None],
@@ -993,28 +1029,305 @@ def create_map(control_points: pd.DataFrame, segments: pd.DataFrame, checkpoint_
 # EXCEL EKSPORT
 # ======================================================
 
-def export_results_to_excel(results: dict) -> bytes:
-    cp, seg, starts, seg_res, cp_res, kp_load, _, _ = format_output_tables(results)
-    class_summary = summarize_segment_classifications(results["segment_results"])
+def format_excel_datetime(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    dt = pd.to_datetime(value)
+    return f"{dt.day}.{dt.month}.{str(dt.year)[2:]} {dt.hour}:{dt.minute:02d}"
 
+
+def format_excel_time(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    dt = pd.to_datetime(value)
+    return f"{dt.hour:02d}:{dt.minute:02d}"
+
+
+def format_duration_hms(minutes_value) -> str:
+    if minutes_value is None or pd.isna(minutes_value):
+        return ""
+    total_seconds = int(round(float(minutes_value) * 60))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours}:{minutes:02d}:{seconds:02d}"
+
+
+def team_display_name(team_id: int) -> str:
+    return f"VK {team_id}"
+
+
+def build_team_schedule(results: dict, team_id: int) -> List[dict]:
+    cp = results["control_points"].copy().sort_values("jarjekord")
+    segments = results["segments"].copy().sort_values("segment_id")
+    checkpoint_results = results["checkpoint_results"].copy()
+    start_times = results["start_times"].copy()
+
+    cp_lookup = cp.set_index("kp_id").to_dict("index")
+    segment_by_start = {int(row["algus_kp_id"]): row for _, row in segments.iterrows()}
+    team_start = pd.to_datetime(start_times.loc[start_times["team_id"] == team_id, "start_time"].iloc[0])
+    team_checkpoints = checkpoint_results[checkpoint_results["team_id"] == team_id].copy()
+    checkpoint_by_id = {int(row["kp_id"]): row for _, row in team_checkpoints.iterrows()}
+
+    rows = []
+    for _, cp_row in cp.iterrows():
+        kp_id = int(cp_row["kp_id"])
+        if kp_id == 0:
+            prep_start = team_start
+            checkpoint_row = None
+        else:
+            checkpoint_row = checkpoint_by_id[kp_id]
+            prep_start = pd.to_datetime(checkpoint_row["arrival_time"])
+
+        prep_minutes = float(cp_row.get("kestvus_ettevalmistus_min", 0) or 0)
+        task_minutes = float(cp_row.get("kestvus_uleanne_min", 0) or 0)
+        task_start = prep_start + timedelta(minutes=prep_minutes)
+        task_end = task_start + timedelta(minutes=task_minutes)
+        departure_time = task_end if checkpoint_row is None else pd.to_datetime(checkpoint_row["departure_time"])
+
+        next_segment = segment_by_start.get(kp_id)
+        movement_minutes = None
+        if next_segment is not None:
+            movement_minutes = float(next_segment.get("rounded_segment_minutes", next_segment.get("minutes_total", 0)) or 0)
+
+        rows.append({
+            "kp_id": kp_id,
+            "kp_label": "Start" if kp_id == 0 else str(kp_id),
+            "nimi": cp_row.get("nimi", ""),
+            "koordinaat": cp_row.get("mgrs", ""),
+            "ettevalmistuste_algus": prep_start,
+            "ulesande_algus": task_start,
+            "ulesande_lopp": task_end,
+            "kontrollpunkti_lopp": departure_time,
+            "liikumisaeg_jargmisesse": movement_minutes,
+            "markused": "",
+        })
+    return rows
+
+
+def style_range(ws, min_row, max_row, min_col, max_col, border, fill=None, font=None, alignment=None):
+    for row in ws.iter_rows(min_row=min_row, max_row=max_row, min_col=min_col, max_col=max_col):
+        for cell in row:
+            cell.border = border
+            if fill is not None:
+                cell.fill = fill
+            if font is not None:
+                cell.font = font
+            if alignment is not None:
+                cell.alignment = alignment
+
+
+def write_data_sheet(ws, results: dict, styles: dict):
+    segments = results["segments"].copy().sort_values("segment_id")
+    cp = results["control_points"].copy().sort_values("jarjekord")
+    starts = results["start_times"].copy().sort_values("team_id")
+    race_config = results["race_config"]
+
+    border = styles["border"]
+    yellow = styles["yellow"]
+    bold = styles["bold"]
+    center = styles["center"]
+
+    ws["A1"] = "Liikumis ajad (h:mm:ss)"
+    ws["D1"] = "Ettevalmistus aeg (h:mm:ss)"
+    ws["G1"] = "Ülesande aeg (h:mm:ss)"
+    ws["J1"] = "Märkused"
+    ws["M1"] = "Nimed"
+    for cell in ["A1", "D1", "G1", "J1", "M1"]:
+        ws[cell].font = bold
+
+    row = 2
+    for _, segment in segments.iterrows():
+        start_id = int(segment["algus_kp_id"])
+        end_id = int(segment["lopp_kp_id"])
+        start_label = "Start" if start_id == 0 else str(start_id)
+        ws.cell(row=row, column=1, value=f"{start_label}->{end_id}")
+        ws.cell(row=row, column=2, value=format_duration_hms(segment.get("rounded_segment_minutes", 0)))
+        row += 1
+    style_range(ws, 1, max(row - 1, 1), 1, 2, border)
+
+    row = 2
+    for _, cp_row in cp[cp["kp_id"] > 0].iterrows():
+        ws.cell(row=row, column=4, value=int(cp_row["kp_id"]))
+        ws.cell(row=row, column=5, value=format_duration_hms(cp_row.get("kestvus_ettevalmistus_min", 0)))
+        row += 1
+    style_range(ws, 1, max(row - 1, 1), 4, 5, border)
+
+    row = 2
+    for _, cp_row in cp[cp["kp_id"] > 0].iterrows():
+        ws.cell(row=row, column=7, value=int(cp_row["kp_id"]))
+        ws.cell(row=row, column=8, value=format_duration_hms(cp_row.get("kestvus_uleanne_min", 0)))
+        row += 1
+    style_range(ws, 1, max(row - 1, 1), 7, 8, border)
+
+    row = 2
+    for _, cp_row in cp[cp["kp_id"] > 0].iterrows():
+        ws.cell(row=row, column=10, value=int(cp_row["kp_id"]))
+        ws.cell(row=row, column=11, value="")
+        row += 1
+    style_range(ws, 1, max(row - 1, 1), 10, 11, border)
+
+    row = 2
+    for _, start_row in starts.iterrows():
+        team_id = int(start_row["team_id"])
+        ws.cell(row=row, column=13, value=team_display_name(team_id))
+        ws.cell(row=row, column=14, value=team_display_name(team_id))
+        row += 1
+    style_range(ws, 1, max(row - 1, 1), 13, 14, border)
+
+    first_team_start = pd.to_datetime(starts.loc[starts["team_id"] == 1, "start_time"].iloc[0]) if (starts["team_id"] == 1).any() else pd.to_datetime(starts["start_time"].iloc[0])
+    config_rows = [
+        ("Esimese VK start", format_excel_datetime(first_team_start)),
+        ("Intervall", format_duration_hms(race_config["stardi_intervall_min"])),
+        ("0 tiim ees", format_duration_hms(race_config["nulltiimi_earlier_min"])),
+        ("Päikesetõus", race_config.get("paeva_algus", "")),
+        ("Päikeseloojang", race_config.get("pimeduse_algus", "")),
+    ]
+    for idx, (label, value) in enumerate(config_rows, start=1):
+        ws.cell(row=idx, column=16, value=label)
+        ws.cell(row=idx, column=17, value=value)
+    style_range(ws, 1, len(config_rows), 16, 17, border, fill=yellow, font=bold)
+
+    for col, width in {"A": 18, "B": 14, "D": 18, "E": 14, "G": 18, "H": 14, "J": 18, "K": 24, "M": 10, "N": 24, "P": 20, "Q": 18}.items():
+        ws.column_dimensions[col].width = width
+    for row_cells in ws.iter_rows():
+        for cell in row_cells:
+            cell.alignment = center
+
+
+def write_summary_section(ws, title: str, start_row: int, values_by_team: Dict[int, List], team_ids: List[int], kp_headers: List[str], styles: dict) -> int:
+    border = styles["border"]
+    yellow = styles["yellow"]
+    bold = styles["bold"]
+    center = styles["center"]
+    gray = styles["gray"]
+
+    max_col = 2 + len(kp_headers)
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=max_col)
+    ws.cell(row=start_row, column=1, value=title)
+    style_range(ws, start_row, start_row, 1, max_col, border, fill=yellow, font=bold, alignment=center)
+
+    header_row = start_row + 1
+    ws.cell(row=header_row, column=1, value="VK")
+    ws.cell(row=header_row, column=2, value="Nimi")
+    for idx, header in enumerate(kp_headers, start=3):
+        ws.cell(row=header_row, column=idx, value=header)
+    style_range(ws, header_row, header_row, 1, max_col, border, fill=yellow, font=bold, alignment=center)
+
+    row = header_row + 1
+    for team_id in team_ids:
+        ws.cell(row=row, column=1, value=team_display_name(team_id))
+        ws.cell(row=row, column=2, value=team_display_name(team_id))
+        for col_idx, value in enumerate(values_by_team[team_id], start=3):
+            ws.cell(row=row, column=col_idx, value=value)
+        fill = gray if row % 2 == 1 else None
+        style_range(ws, row, row, 1, max_col, border, fill=fill, alignment=center)
+        row += 1
+
+    return row + 1
+
+
+def write_summary_sheet(ws, results: dict, styles: dict):
+    from openpyxl.utils import get_column_letter
+
+    cp = results["control_points"].copy().sort_values("jarjekord")
+    starts = results["start_times"].copy().sort_values("team_id")
+    team_ids = [int(team_id) for team_id in starts["team_id"]]
+    kp_headers = ["Start"] + [str(int(kp_id)) for kp_id in cp.loc[cp["kp_id"] > 0, "kp_id"]]
+
+    prep_values = {}
+    task_start_values = {}
+    task_end_values = {}
+    departure_values = {}
+    for team_id in team_ids:
+        schedule = build_team_schedule(results, team_id)
+        prep_values[team_id] = [format_excel_datetime(row["ettevalmistuste_algus"]) for row in schedule]
+        task_start_values[team_id] = [format_excel_datetime(row["ulesande_algus"]) for row in schedule]
+        task_end_values[team_id] = [format_excel_datetime(row["ulesande_lopp"]) for row in schedule]
+        departure_values[team_id] = [format_excel_datetime(row["kontrollpunkti_lopp"]) for row in schedule]
+
+    row = 1
+    row = write_summary_section(ws, "Ettevalmistuste algus", row, prep_values, team_ids, kp_headers, styles)
+    row = write_summary_section(ws, "Ülesande algus", row, task_start_values, team_ids, kp_headers, styles)
+    row = write_summary_section(ws, "Ülesande lõpp", row, task_end_values, team_ids, kp_headers, styles)
+    write_summary_section(ws, "Kontrollpunkti lõpp", row, departure_values, team_ids, kp_headers, styles)
+
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 18
+    for col_idx in range(3, 3 + len(kp_headers)):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 16
+
+
+def write_print_sheet(ws, results: dict, styles: dict):
+    starts = results["start_times"].copy().sort_values("team_id")
+    team_ids = [int(team_id) for team_id in starts["team_id"]]
+    border = styles["border"]
+    bold = styles["bold"]
+    gray = styles["gray"]
+    center = styles["center"]
+
+    headers = ["KP", "Koordinaat", "Ettevalmistuste algus", "Ülesande algus", "Ülesande lõpp", "Liikumisaeg järgmisesse", "Märkused"]
+    row = 1
+    for team_id in team_ids:
+        ws.cell(row=row, column=1, value=team_display_name(team_id))
+        ws.cell(row=row, column=1).font = bold
+        row += 1
+
+        for col_idx, header in enumerate(headers, start=1):
+            ws.cell(row=row, column=col_idx, value=header)
+        style_range(ws, row, row, 1, len(headers), border, font=bold, alignment=center)
+        row += 1
+
+        for idx, item in enumerate(build_team_schedule(results, team_id)):
+            values = [
+                item["kp_label"],
+                "" if item["kp_id"] == 0 else item["koordinaat"],
+                format_excel_datetime(item["ettevalmistuste_algus"]),
+                format_excel_time(item["ulesande_algus"]),
+                format_excel_time(item["ulesande_lopp"]),
+                format_duration_hms(item["liikumisaeg_jargmisesse"]),
+                item["markused"],
+            ]
+            for col_idx, value in enumerate(values, start=1):
+                ws.cell(row=row, column=col_idx, value=value)
+            fill = gray if idx % 2 == 1 else None
+            style_range(ws, row, row, 1, len(headers), border, fill=fill, alignment=center)
+            row += 1
+
+        row += 3
+
+    widths = {"A": 16, "B": 22, "C": 24, "D": 18, "E": 18, "F": 26, "G": 34}
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+
+
+def export_results_to_excel(results: dict) -> bytes:
     from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
     output = BytesIO()
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        cp.to_excel(writer, sheet_name="kontrollpunktid", index=False)
-        seg.to_excel(writer, sheet_name="loigud", index=False)
-        starts.to_excel(writer, sheet_name="stardiajad", index=False)
-        seg_res.to_excel(writer, sheet_name="loigutulemused", index=False)
-        cp_res.to_excel(writer, sheet_name="kp_ajad", index=False)
-        kp_load.to_excel(writer, sheet_name="kp_koormus", index=False)
-        class_summary.to_excel(writer, sheet_name="valgus_kokkuvote", index=False)
+    thin = Side(style="thin", color="000000")
+    styles = {
+        "border": Border(left=thin, right=thin, top=thin, bottom=thin),
+        "yellow": PatternFill("solid", fgColor="FFFF00"),
+        "gray": PatternFill("solid", fgColor="B7B7B7"),
+        "bold": Font(bold=True),
+        "center": Alignment(horizontal="center", vertical="center"),
+    }
 
-        # Formateeri race_config
-        race_config_formatted = results["race_config"].copy()
-        for key, value in race_config_formatted.items():
-            if isinstance(value, datetime):
-                race_config_formatted[key] = value.strftime("%Y-%m-%d %H:%M:%S")
-        pd.DataFrame([race_config_formatted]).to_excel(writer, sheet_name="seadistused", index=False)
+    wb = Workbook()
+    ws_data = wb.active
+    ws_data.title = "Data"
+    ws_summary = wb.create_sheet("Üld")
+    ws_print = wb.create_sheet("Print")
+
+    write_data_sheet(ws_data, results, styles)
+    write_summary_sheet(ws_summary, results, styles)
+    write_print_sheet(ws_print, results, styles)
+
+    wb.save(output)
 
     output.seek(0)
     return output.getvalue()
