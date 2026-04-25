@@ -79,11 +79,7 @@ with st.sidebar:
     # Kiiruste ülekirjutused
     st.subheader("Kiiruste ülekirjutused")
     overrides_df = st.data_editor(
-        pd.DataFrame(
-            [
-                {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee", "liikumiskiirus": 4.0},
-            ]
-        ),
+        pd.DataFrame(columns=["segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis", "liikumiskiirus"]),
         num_rows="dynamic",
         use_container_width=True,
         key="overrides_editor",

@@ -392,35 +392,23 @@ def simulate_all_teams(control_points: pd.DataFrame, segments: pd.DataFrame, rac
     all_segment_results = []
     all_checkpoint_results = []
 
-    reference_start = parse_datetime(race_config["esimese_voistkonna_start"])
-    reference_seg_res, reference_cp_res = simulate_team_route(
-        team_id=-1,
-        team_start=reference_start,
-        control_points=control_points,
-        segments=segments,
-        race_config=race_config,
-        start_duration_min=start_duration_min,
-    )
-
     for _, team_row in start_times_df.iterrows():
         team_id = int(team_row["team_id"])
         team_start = pd.to_datetime(team_row["start_time"])
-        offset = team_start - reference_start
 
-        seg_res = reference_seg_res.copy()
-        seg_res["team_id"] = team_id
-        seg_res["start_time"] = seg_res["start_time"] + offset
-        seg_res["end_time"] = seg_res["end_time"] + offset
+        seg_res, cp_res = simulate_team_route(
+            team_id=team_id,
+            team_start=team_start,
+            control_points=control_points,
+            segments=segments,
+            race_config=race_config,
+            start_duration_min=start_duration_min,
+        )
         seg_res = seg_res.merge(
             segments[["segment_id", "valgustingimused"]].rename(columns={"valgustingimused": "chosen_light_condition"}),
             on="segment_id",
             how="left"
         )
-
-        cp_res = reference_cp_res.copy()
-        cp_res["team_id"] = team_id
-        cp_res["arrival_time"] = cp_res["arrival_time"] + offset
-        cp_res["departure_time"] = cp_res["departure_time"] + offset
 
         all_segment_results.append(seg_res)
         all_checkpoint_results.append(cp_res)
@@ -504,6 +492,11 @@ def validate_inputs(control_points: pd.DataFrame, segments: pd.DataFrame, race_c
     required_cp = {"kp_id", "nimi", "mgrs", "jarjekord"}
     required_seg = {"segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis"}
 
+    if control_points.empty:
+        raise ValueError("Kontrollpunktide tabel ei tohi olla tühi.")
+    if segments.empty:
+        raise ValueError("Lõikude tabel ei tohi olla tühi.")
+
     if not required_cp.issubset(control_points.columns):
         missing = required_cp - set(control_points.columns)
         raise ValueError(f"Kontrollpunktide tabelist puuduvad veerud: {missing}")
@@ -517,11 +510,19 @@ def validate_inputs(control_points: pd.DataFrame, segments: pd.DataFrame, race_c
 
     control_points = normalize_control_point_durations(control_points)
 
+    if control_points[list(required_cp)].isna().any().any():
+        raise ValueError("Kontrollpunktide kohustuslikud väljad ei tohi olla tühjad.")
+    if segments[list(required_seg)].isna().any().any():
+        raise ValueError("Lõikude kohustuslikud väljad ei tohi olla tühjad.")
+
     if control_points["kp_id"].duplicated().any():
         raise ValueError("kp_id peab olema unikaalne.")
 
     if control_points["jarjekord"].duplicated().any():
         raise ValueError("jarjekord peab olema unikaalne.")
+
+    if segments["segment_id"].duplicated().any():
+        raise ValueError("segment_id peab olema unikaalne.")
 
     if (control_points["kestvus_min"] < 0).any():
         raise ValueError("Kontrollpunkti kestvus ei tohi olla negatiivne.")
@@ -545,6 +546,12 @@ def validate_inputs(control_points: pd.DataFrame, segments: pd.DataFrame, race_c
         raise ValueError("Stardiintervall peab olema suurem kui 0.")
     if race_config["nulltiimi_earlier_min"] < 0:
         raise ValueError("0-tiimi eelaeg ei tohi olla negatiivne.")
+
+    parse_datetime(race_config["esimese_voistkonna_start"])
+    parse_date(race_config["voistluse_kuupaev"])
+    if not race_config.get("kasuta_automaatset_paikest", False):
+        parse_clock(race_config["paeva_algus"])
+        parse_clock(race_config["pimeduse_algus"])
 
 
 # ======================================================
@@ -626,7 +633,6 @@ def format_output_tables(results: dict):
     seg["tee_kaugus_km"] = (seg["tee_kaugus_m"] / 1000).round(2)
     seg["kasutatav_kaugus_km"] = (seg["kasutatav_kaugus_m"] / 1000).round(2)
 
-    seg["valgustingimused"] = ""
     seg["liikumiskiirus"] = ""
 
     segment_lighting = (
@@ -656,6 +662,7 @@ def format_output_tables(results: dict):
     segment_lighting = segment_lighting.merge(mixed_counts, on="segment_id", how="left")
     segment_lighting["valgustingimused"] = segment_lighting.apply(format_lighting, axis=1)
 
+    seg = seg.drop(columns=["valgustingimused"], errors="ignore")
     seg = seg.merge(segment_lighting[["segment_id", "valgustingimused"]], on="segment_id", how="left")
 
     def format_speed(row):
