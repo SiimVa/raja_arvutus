@@ -41,14 +41,6 @@ DEFAULT_CONTROL_POINTS = pd.DataFrame([
     {"kp_id": 4, "nimi": "KP4", "mgrs": "35VLL3479411624", "kestvus_ettevalmistus_min": 5, "kestvus_uleanne_min": 10, "kestvus_tagasiside_min": 5, "kestvus_min": 20, "jarjekord": 4},
 ])
 
-DEFAULT_SEGMENTS = pd.DataFrame([
-    {"segment_id": 1, "algus_kp_id": 0, "lopp_kp_id": 1, "liikumisviis": "tee"},
-    {"segment_id": 2, "algus_kp_id": 1, "lopp_kp_id": 2, "liikumisviis": "varjatud"},
-    {"segment_id": 3, "algus_kp_id": 2, "lopp_kp_id": 3, "liikumisviis": "tee"},
-    {"segment_id": 4, "algus_kp_id": 3, "lopp_kp_id": 4, "liikumisviis": "tee"},
-])
-
-
 # ======================================================
 # UI abifunktsioonid
 # ======================================================
@@ -66,6 +58,9 @@ def prepare_control_points(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if not df.empty:
         df = df.dropna(subset=["kp_id"])
+    for column in ["kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min"]:
+        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+    df["jarjekord"] = range(1, len(df) + 1)
     return df.astype({
         "kp_id": int,
         "kestvus_ettevalmistus_min": int,
@@ -75,7 +70,7 @@ def prepare_control_points(df: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def prepare_segments(df: pd.DataFrame, start_movement_mode: str) -> pd.DataFrame:
+def prepare_segments(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if not df.empty:
         df = df.dropna(subset=["segment_id"])
@@ -84,8 +79,43 @@ def prepare_segments(df: pd.DataFrame, start_movement_mode: str) -> pd.DataFrame
         "algus_kp_id": int,
         "lopp_kp_id": int,
     })
-    df.loc[df["segment_id"] == 1, "liikumisviis"] = start_movement_mode
     return df
+
+
+def apply_default_durations(df: pd.DataFrame, preparation_min: int, task_min: int, feedback_min: int) -> pd.DataFrame:
+    df = df.copy()
+    defaults = {
+        "kestvus_ettevalmistus_min": preparation_min,
+        "kestvus_uleanne_min": task_min,
+        "kestvus_tagasiside_min": feedback_min,
+    }
+    for column, default_value in defaults.items():
+        if column not in df.columns:
+            df[column] = default_value
+        df[column] = pd.to_numeric(df[column], errors="coerce").fillna(default_value)
+    return df
+
+
+def build_segments_from_control_points(control_points: pd.DataFrame, start_movement_mode: str) -> pd.DataFrame:
+    cp = control_points.copy()
+    if cp.empty or "kp_id" not in cp.columns:
+        return pd.DataFrame(columns=["segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis"])
+
+    cp = cp.dropna(subset=["kp_id"]).reset_index(drop=True)
+    rows = []
+    previous_kp_id = 0
+    for index, row in cp.iterrows():
+        segment_id = index + 1
+        mode = start_movement_mode if segment_id == 1 else "tee"
+        current_kp_id = int(row["kp_id"])
+        rows.append({
+            "segment_id": segment_id,
+            "algus_kp_id": previous_kp_id,
+            "lopp_kp_id": current_kp_id,
+            "liikumisviis": mode,
+        })
+        previous_kp_id = current_kp_id
+    return pd.DataFrame(rows)
 
 
 def prepare_overrides(df: pd.DataFrame) -> dict:
@@ -281,45 +311,59 @@ input_tab, result_tab, map_tab, export_tab = st.tabs(["Sisendid", "Tulemused", "
 
 with input_tab:
     st.subheader("Rada")
-    route_cols = st.columns([1, 1])
-    with route_cols[0]:
-        st.markdown("**Kontrollpunktid**")
-        control_points_df = st.data_editor(
-            DEFAULT_CONTROL_POINTS[[
-                "kp_id", "nimi", "mgrs",
-                "kestvus_ettevalmistus_min", "kestvus_uleanne_min",
-                "kestvus_tagasiside_min", "jarjekord",
-            ]],
-            num_rows="dynamic",
-            width="stretch",
-            hide_index=True,
-            key="control_points_editor",
-            column_config={
-                "kp_id": st.column_config.NumberColumn("KP", min_value=1, step=1),
-                "nimi": st.column_config.TextColumn("Nimi"),
-                "mgrs": st.column_config.TextColumn("MGRS"),
-                "kestvus_ettevalmistus_min": st.column_config.NumberColumn("Ettevalmistus", min_value=0, step=1),
-                "kestvus_uleanne_min": st.column_config.NumberColumn("Ülesanne", min_value=0, step=1),
-                "kestvus_tagasiside_min": st.column_config.NumberColumn("Tagasiside", min_value=0, step=1),
-                "jarjekord": st.column_config.NumberColumn("Järjekord", min_value=1, step=1),
-            },
-        )
+    duration_cols = st.columns(3)
+    default_preparation_min = duration_cols[0].number_input("Vaikimisi ettevalmistus (min)", min_value=0, value=5)
+    default_task_min = duration_cols[1].number_input("Vaikimisi ülesanne (min)", min_value=0, value=10)
+    default_feedback_min = duration_cols[2].number_input("Vaikimisi tagasiside (min)", min_value=0, value=5)
 
-    with route_cols[1]:
-        st.markdown("**Lõigud**")
-        segments_df = st.data_editor(
-            DEFAULT_SEGMENTS,
-            num_rows="dynamic",
-            width="stretch",
-            hide_index=True,
-            key="segments_editor",
-            column_config={
-                "segment_id": st.column_config.NumberColumn("Lõik", min_value=1, step=1),
-                "algus_kp_id": st.column_config.NumberColumn("Algus KP", min_value=0, step=1),
-                "lopp_kp_id": st.column_config.NumberColumn("Lõpp KP", min_value=0, step=1),
-                "liikumisviis": st.column_config.SelectboxColumn("Liikumisviis", options=["tee", "varjatud"], required=True),
-            },
-        )
+    st.markdown("**Kontrollpunktid**")
+    control_points_base = apply_default_durations(
+        DEFAULT_CONTROL_POINTS[[
+            "kp_id", "nimi", "mgrs",
+        ]],
+        default_preparation_min,
+        default_task_min,
+        default_feedback_min,
+    )
+    control_points_df = st.data_editor(
+        control_points_base,
+        num_rows="dynamic",
+        width="stretch",
+        hide_index=True,
+        key="control_points_editor_v2",
+        column_config={
+            "kp_id": st.column_config.NumberColumn("KP", min_value=1, step=1),
+            "nimi": st.column_config.TextColumn("Nimi"),
+            "mgrs": st.column_config.TextColumn("MGRS"),
+            "kestvus_ettevalmistus_min": st.column_config.NumberColumn("Ettevalmistus", min_value=0, step=1),
+            "kestvus_uleanne_min": st.column_config.NumberColumn("Ülesanne", min_value=0, step=1),
+            "kestvus_tagasiside_min": st.column_config.NumberColumn("Tagasiside", min_value=0, step=1),
+        },
+    )
+
+    control_points_for_segments = apply_default_durations(
+        control_points_df,
+        default_preparation_min,
+        default_task_min,
+        default_feedback_min,
+    )
+    generated_segments = build_segments_from_control_points(control_points_for_segments, start_movement_mode)
+
+    st.markdown("**Automaatselt loodud lõigud**")
+    segments_df = st.data_editor(
+        generated_segments,
+        num_rows="fixed",
+        width="stretch",
+        hide_index=True,
+        key="segments_editor_v2",
+        disabled=["segment_id", "algus_kp_id", "lopp_kp_id"],
+        column_config={
+            "segment_id": st.column_config.NumberColumn("Lõik"),
+            "algus_kp_id": st.column_config.NumberColumn("Algus KP"),
+            "lopp_kp_id": st.column_config.NumberColumn("Lõpp KP"),
+            "liikumisviis": st.column_config.SelectboxColumn("Liikumisviis", options=["tee", "varjatud"], required=True),
+        },
+    )
 
     st.subheader("Kiirused")
     speed_cols = st.columns([1, 1])
@@ -361,8 +405,15 @@ with input_tab:
                 "pimeduse_algus": dark_start_time.strftime("%H:%M"),
             }
 
-            control_points_parsed = prepare_control_points(control_points_df)
-            segments_parsed = prepare_segments(segments_df, start_movement_mode)
+            control_points_parsed = prepare_control_points(
+                apply_default_durations(
+                    control_points_df,
+                    default_preparation_min,
+                    default_task_min,
+                    default_feedback_min,
+                )
+            )
+            segments_parsed = prepare_segments(segments_df)
             overrides = prepare_overrides(overrides_df)
 
             with st.spinner("Arvutan distantse, valgusolusid ja ajagraafikut..."):
