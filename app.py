@@ -1,9 +1,8 @@
-import streamlit as st
+from datetime import datetime
+
 import pandas as pd
-from io import BytesIO
+import streamlit as st
 from streamlit_folium import st_folium
-import folium
-import plotly.express as px
 
 from utils import (
     run_full_simulation,
@@ -11,11 +10,11 @@ from utils import (
     summarize_segment_classifications,
     create_map,
     export_results_to_excel,
-    validate_inputs,
 )
 
+
 # ======================================================
-# VAikimisi andmed
+# Vaikimisi andmed
 # ======================================================
 
 DEFAULT_RACE_CONFIG = {
@@ -49,218 +48,429 @@ DEFAULT_SEGMENTS = pd.DataFrame([
     {"segment_id": 4, "algus_kp_id": 3, "lopp_kp_id": 4, "liikumisviis": "tee"},
 ])
 
+
 # ======================================================
-# Streamlit App
+# UI abifunktsioonid
 # ======================================================
 
-st.title("Võistlusmatka Raja Arvutamise Tööriist")
+def parse_default_datetime(value: str) -> datetime:
+    return datetime.strptime(value, "%Y-%m-%d %H:%M")
 
-st.sidebar.header("Sisendandmed")
 
-# Kontrollpunktid
-with st.sidebar:
-    st.subheader("Kontrollpunktid")
-    control_points_df = st.data_editor(
-        DEFAULT_CONTROL_POINTS[["kp_id", "nimi", "mgrs", "kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min", "jarjekord"]],
-        num_rows="dynamic",
-        use_container_width=True,
-        key="control_points_editor",
-    )
+def rename_columns(df: pd.DataFrame, labels: dict) -> pd.DataFrame:
+    visible_labels = {key: value for key, value in labels.items() if key in df.columns}
+    return df.rename(columns=visible_labels)
 
-    # Lõigud
-    st.subheader("Lõigud")
-    segments_df = st.data_editor(
-        DEFAULT_SEGMENTS,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="segments_editor",
-    )
 
-    # Kiiruste ülekirjutused
-    st.subheader("Kiiruste ülekirjutused")
-    overrides_df = st.data_editor(
-        pd.DataFrame(columns=["segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis", "liikumiskiirus"]),
-        num_rows="dynamic",
-        use_container_width=True,
-        key="overrides_editor",
-    )
+def prepare_control_points(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if not df.empty:
+        df = df.dropna(subset=["kp_id"])
+    return df.astype({
+        "kp_id": int,
+        "kestvus_ettevalmistus_min": int,
+        "kestvus_uleanne_min": int,
+        "kestvus_tagasiside_min": int,
+        "jarjekord": int,
+    })
 
-# Start koordinaat
-st.sidebar.subheader("Start")
-start_mgrs = st.sidebar.text_input("Start MGRS", value="35VLL2445309927", help="Stardi asukoht MGRS formaadis")
-start_duration_min = st.sidebar.number_input("Start kestus (min)", min_value=0, value=0, help="Aeg stardis enne liikumist")
-start_movement_mode = st.sidebar.selectbox("Start liikumisviis", ["tee", "varjatud"], index=0, help="Kuidas liigutakse stardist KP1-ni")
 
-st.sidebar.markdown(
-    "**Vaikekiirused:**\n"
-    "- Varjatud päev: 2 km/h\n"
-    "- Varjatud öö: 1.5 km/h\n"
-    "- Tee päev: 4 km/h\n"
-    "- Tee öö: 3.5 km/h\n"
-    "Kui lõik on segalõik, siis arvestatakse automaatselt öökiirusega, kui osa ajast on pimedas."
-)
+def prepare_segments(df: pd.DataFrame, start_movement_mode: str) -> pd.DataFrame:
+    df = df.copy()
+    if not df.empty:
+        df = df.dropna(subset=["segment_id"])
+    df = df.astype({
+        "segment_id": int,
+        "algus_kp_id": int,
+        "lopp_kp_id": int,
+    })
+    df.loc[df["segment_id"] == 1, "liikumisviis"] = start_movement_mode
+    return df
 
-# Konfiguratsioon
-st.sidebar.subheader("Konfiguratsioon")
-start_time = st.sidebar.text_input("Esimese võistkonna start", DEFAULT_RACE_CONFIG["esimese_voistkonna_start"])
-team_count = st.sidebar.number_input("Võistkondade arv", min_value=1, value=DEFAULT_RACE_CONFIG["voistkondade_arv"])
-interval = st.sidebar.number_input("Stardi intervall (min)", min_value=1, value=DEFAULT_RACE_CONFIG["stardi_intervall_min"])
-zero_early = st.sidebar.number_input("0-tiim enne (min)", min_value=0, value=DEFAULT_RACE_CONFIG["nulltiimi_earlier_min"])
-race_date = st.sidebar.text_input("Võistluse kuupäev", DEFAULT_RACE_CONFIG["voistluse_kuupaev"])
-timezone = st.sidebar.text_input("Ajavöönd", DEFAULT_RACE_CONFIG["timezone"])
-auto_sun = st.sidebar.checkbox("Automaatne päike", value=DEFAULT_RACE_CONFIG["kasuta_automaatset_paikest"])
-day_start = st.sidebar.text_input("Päeva algus (kui mitte auto)", DEFAULT_RACE_CONFIG["paeva_algus"])
-dark_start = st.sidebar.text_input("Pime algab (kui mitte auto)", DEFAULT_RACE_CONFIG["pimeduse_algus"])
 
-if st.sidebar.button("Arvuta"):
-    try:
-        control_points_df = control_points_df.copy()
-        control_points_df = control_points_df.dropna(subset=["kp_id"]) if not control_points_df.empty else control_points_df
-        control_points_df = control_points_df.astype({
-            "kp_id": int,
-            "kestvus_ettevalmistus_min": int,
-            "kestvus_uleanne_min": int,
-            "kestvus_tagasiside_min": int,
-            "jarjekord": int,
-        })
+def prepare_overrides(df: pd.DataFrame) -> dict:
+    df = df.copy()
+    if df.empty:
+        return {}
 
-        segments_df = segments_df.copy()
-        segments_df = segments_df.dropna(subset=["segment_id"]) if not segments_df.empty else segments_df
-        segments_df = segments_df.astype({
-            "segment_id": int,
-            "algus_kp_id": int,
-            "lopp_kp_id": int,
-        })
+    df = df.dropna(subset=["segment_id", "liikumiskiirus"])
+    if df.empty:
+        return {}
 
-        # Muuda esimene segment start liikumisviisiks
-        segments_df.loc[segments_df["segment_id"] == 1, "liikumisviis"] = start_movement_mode
-
-        overrides_df_parsed = overrides_df.copy()
-        if not overrides_df_parsed.empty:
-            overrides_df_parsed = overrides_df_parsed.dropna(subset=["segment_id"])
-            overrides_df_parsed = overrides_df_parsed.astype({
-                "segment_id": int,
-                "algus_kp_id": int,
-                "lopp_kp_id": int,
-                "liikumiskiirus": float,
-            })
-
-        race_config = {
-            "esimese_voistkonna_start": start_time,
-            "voistkondade_arv": int(team_count),
-            "stardi_intervall_min": int(interval),
-            "nulltiimi_earlier_min": int(zero_early),
-            "voistluse_kuupaev": race_date,
-            "timezone": timezone,
-            "kasuta_automaatset_paikest": auto_sun,
-            "paeva_algus": day_start,
-            "pimeduse_algus": dark_start,
+    df = df.astype({
+        "segment_id": int,
+        "liikumiskiirus": float,
+    })
+    return {
+        int(row["segment_id"]): {
+            "valge": float(row["liikumiskiirus"]),
+            "pime": float(row["liikumiskiirus"]),
         }
+        for _, row in df.iterrows()
+    }
 
-        overrides = {}
-        if not overrides_df_parsed.empty:
-            for _, row in overrides_df_parsed.iterrows():
-                overrides[int(row["segment_id"])] = {
-                    "valge": float(row["liikumiskiirus"]),
-                    "pime": float(row["liikumiskiirus"]),
-                }
 
-        # Käivita simulatsioon
-        results = run_full_simulation(control_points_df, segments_df, race_config, DEFAULT_SPEEDS, overrides, start_mgrs, start_duration_min)
-
-        # Salvesta sessiooni
-        st.session_state["results"] = results
-
-        st.success("Arvutus lõpetatud!")
-
-    except Exception as e:
-        st.error(f"Viga: {e}")
-
-# Tulemuste kuvamine
-if "results" in st.session_state:
-    results = st.session_state["results"]
-
-    st.header("Päikese info / Valguspiirid")
-    st.write(f"Päeva algus: {results['race_config']['paeva_algus']}")
-    st.write(f"Pime algab: {results['race_config']['pimeduse_algus']}")
-    if "sunrise_full" in results["race_config"]:
-        st.write(f"Päikesetõus: {results['race_config']['sunrise_full']}")
-        st.write(f"Päikeseloojang: {results['race_config']['sunset_full']}")
-
-    cp_out, seg_out, starts_out, seg_res_out, cp_res_out, kp_load_out, cp_sync_out, sync_fig = format_output_tables(results)
-    class_summary = summarize_segment_classifications(results["segment_results"])
-
-    st.header("Kontrollpunktid")
-    st.dataframe(cp_out)
-
-    st.header("Lõigud")
-    st.dataframe(seg_out[[
-        "segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis",
-        "sirge_kaugus_km", "tee_kaugus_km", "kasutatav_kaugus_km",
-        "valgustingimused", "liikumiskiirus",
-        "liikumise aeg täpne (min)", "liikumise aeg ümardatud (min)",
-        "distance_note"
-    ]])
-
-    st.header("Stardiajad")
-    st.dataframe(starts_out)
-
-    st.header("Lõikude valgusklassifikatsiooni kokkuvõte")
-    st.dataframe(class_summary)
-
-    st.header("Kontrollpunktide koormus")
-    st.dataframe(kp_load_out)
-
-    st.header("Kontrollpunktide sünkroniseerimine")
-    st.plotly_chart(sync_fig)
-
-    st.header("Võistkondade lõigutulemused")
-    seg_res_display = seg_res_out.copy()
-    display_columns = [
-        "team_id", "segment_id", "algus_kp_id", "lopp_kp_id",
-        "start_time", "end_time", "distance_m",
-        "reaalne_valgustingimus", "chosen_light_condition",
-        "exact_minutes", "minutes_total", "distance_km"
-    ]
-    display_columns = [col for col in display_columns if col in seg_res_display.columns]
-    st.dataframe(seg_res_display[display_columns])
-
-    st.header("Võistkondade KP ajad")
-    st.dataframe(cp_res_out)
-
-    st.header("Kaardivaade")
-    m = create_map(cp_out, results["segments"], results["checkpoint_results"], seg_res_out)
-    st_folium(m, width=700, height=500)
-
-    # Excel eksport
+def render_downloads(results: dict):
     excel_data = export_results_to_excel(results)
     st.download_button(
-        label="Laadi alla Excel (täielik)",
+        label="Laadi alla täielik Excel",
         data=excel_data,
         file_name="raja_tulemused.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
     )
 
     try:
         from utils import export_variant1
         variant1_data = export_variant1(results)
         st.download_button(
-            label="Laadi alla Variant 1 (iga VK eraldi)",
+            label="Variant 1: iga võistkond eraldi",
             data=variant1_data,
             file_name="variant1_iga_vk_eraldi.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
         )
     except ImportError:
-        st.warning("Variant 1 eksport ei ole saadaval.")
+        st.caption("Variant 1 eksport ei ole saadaval.")
 
     try:
         from utils import export_variant2
         variant2_data = export_variant2(results)
         st.download_button(
-            label="Laadi alla Variant 2 (KP-de kaupa)",
+            label="Variant 2: kontrollpunktide kaupa",
             data=variant2_data,
             file_name="variant2_kp_de_kaupa.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
         )
     except ImportError:
-        st.warning("Variant 2 eksport ei ole saadaval.")
+        st.caption("Variant 2 eksport ei ole saadaval.")
+
+
+def render_summary(results: dict, seg_out: pd.DataFrame, kp_load_out: pd.DataFrame, class_summary: pd.DataFrame):
+    total_distance_km = results["segments"]["kasutatav_kaugus_m"].sum() / 1000
+    first_start = pd.to_datetime(results["start_times"]["start_time"]).min().strftime("%d.%m %H:%M")
+    last_departure = pd.to_datetime(results["checkpoint_results"]["departure_time"]).max().strftime("%d.%m %H:%M")
+    mixed_segments = int((class_summary["sega"] > 0).sum()) if "sega" in class_summary.columns else 0
+
+    if kp_load_out.empty:
+        peak_load_label = "-"
+    else:
+        peak_row = kp_load_out.sort_values("maksimaalne_koormus", ascending=False).iloc[0]
+        peak_load_label = f"{peak_row['kp_nimi']} ({peak_row['maksimaalne_koormus']})"
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Võistkondi", int(results["race_config"]["voistkondade_arv"]))
+    metric_cols[1].metric("Raja pikkus", f"{total_distance_km:.1f} km")
+    metric_cols[2].metric("Ajavahemik", f"{first_start} - {last_departure}")
+    metric_cols[3].metric("Segavalgusega lõike", mixed_segments)
+    metric_cols[4].metric("Suurim KP koormus", peak_load_label)
+
+    st.subheader("Valguspiirid")
+    sun_cols = st.columns(4)
+    sun_cols[0].metric("Päeva algus", results["race_config"]["paeva_algus"])
+    sun_cols[1].metric("Pime algab", results["race_config"]["pimeduse_algus"])
+    if "sunrise_full" in results["race_config"]:
+        sun_cols[2].metric("Päikesetõus", pd.to_datetime(results["race_config"]["sunrise_full"]).strftime("%H:%M"))
+        sun_cols[3].metric("Päikeseloojang", pd.to_datetime(results["race_config"]["sunset_full"]).strftime("%H:%M"))
+
+    st.subheader("Olulised lõigud")
+    segment_columns = [
+        "segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis",
+        "kasutatav_kaugus_km", "valgustingimused", "liikumiskiirus",
+        "liikumise aeg ümardatud (min)",
+    ]
+    st.dataframe(
+        rename_columns(seg_out[segment_columns], TABLE_LABELS),
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.subheader("Kontrollpunktide koormus")
+    st.dataframe(
+        rename_columns(kp_load_out, TABLE_LABELS),
+        width="stretch",
+        hide_index=True,
+    )
+
+
+TABLE_LABELS = {
+    "team_id": "Võistkond",
+    "segment_id": "Lõik",
+    "algus_kp_id": "Algus KP",
+    "lopp_kp_id": "Lõpp KP",
+    "liikumisviis": "Liikumisviis",
+    "sirge_kaugus_km": "Sirge kaugus (km)",
+    "tee_kaugus_km": "Tee kaugus (km)",
+    "kasutatav_kaugus_km": "Arvestatud kaugus (km)",
+    "valgustingimused": "Valgus",
+    "liikumiskiirus": "Kiirus (km/h)",
+    "liikumise aeg täpne (min)": "Liikumisaeg täpne (min)",
+    "liikumise aeg ümardatud (min)": "Liikumisaeg ümardatud (min)",
+    "distance_note": "Distantsi allikas",
+    "start_time": "Algus",
+    "end_time": "Lõpp",
+    "distance_m": "Kaugus (m)",
+    "distance_km": "Kaugus (km)",
+    "reaalne_valgustingimus": "Tegelik valgus",
+    "chosen_light_condition": "Arvutuses kasutatud valgus",
+    "exact_minutes": "Täpne aeg (min)",
+    "minutes_total": "Ümardatud aeg (min)",
+    "kp_id": "KP",
+    "kp_nimi": "Kontrollpunkt",
+    "arrival_time": "Saabumine",
+    "departure_time": "Lahkumine",
+    "maksimaalne_koormus": "Maksimaalne koormus",
+    "maks_koormuse_hetk": "Maks koormuse hetk",
+    "kokku_kulastusi": "Külastusi",
+    "varaseim_saabumine": "Varaseim saabumine",
+    "hiliseim_lahkumine": "Hiliseim lahkumine",
+    "valge": "Valges",
+    "pime": "Pimedas",
+    "sega": "Segavalguses",
+    "nimi": "Nimi",
+    "mgrs": "MGRS",
+    "kestvus_ettevalmistus_min": "Ettevalmistus (min)",
+    "kestvus_uleanne_min": "Ülesanne (min)",
+    "kestvus_tagasiside_min": "Tagasiside (min)",
+    "kestvus_min": "Kokku (min)",
+    "jarjekord": "Järjekord",
+}
+
+
+# ======================================================
+# Streamlit App
+# ======================================================
+
+st.set_page_config(
+    page_title="Raja arvutamise tööriist",
+    layout="wide",
+)
+
+default_start = parse_default_datetime(DEFAULT_RACE_CONFIG["esimese_voistkonna_start"])
+default_race_date = parse_default_datetime(f"{DEFAULT_RACE_CONFIG['voistluse_kuupaev']} 00:00").date()
+default_day_start = parse_default_datetime(f"2026-01-01 {DEFAULT_RACE_CONFIG['paeva_algus']}").time()
+default_dark_start = parse_default_datetime(f"2026-01-01 {DEFAULT_RACE_CONFIG['pimeduse_algus']}").time()
+
+st.title("Võistlusmatka raja arvutamine")
+st.caption("Sisesta rada, stardid ja liikumiskiirused. Tulemused koondatakse ülevaateks, tabeliteks, ajajooneks ja kaardiks.")
+
+with st.sidebar:
+    st.header("Arvutus")
+    start_date = st.date_input("Esimese võistkonna stardipäev", value=default_start.date())
+    start_clock = st.time_input("Esimese võistkonna stardikell", value=default_start.time())
+    team_count = st.number_input("Võistkondade arv", min_value=1, value=DEFAULT_RACE_CONFIG["voistkondade_arv"])
+    interval = st.number_input("Stardi intervall (min)", min_value=1, value=DEFAULT_RACE_CONFIG["stardi_intervall_min"])
+    zero_early = st.number_input("0-tiim enne (min)", min_value=0, value=DEFAULT_RACE_CONFIG["nulltiimi_earlier_min"])
+
+    st.divider()
+    st.header("Valgus")
+    race_date = st.date_input("Võistluse kuupäev", value=default_race_date)
+    timezone = st.text_input("Ajavöönd", DEFAULT_RACE_CONFIG["timezone"])
+    auto_sun = st.checkbox("Arvuta päike automaatselt", value=DEFAULT_RACE_CONFIG["kasuta_automaatset_paikest"])
+    day_start_time = st.time_input("Päeva algus", value=default_day_start, disabled=auto_sun)
+    dark_start_time = st.time_input("Pime algab", value=default_dark_start, disabled=auto_sun)
+
+    st.divider()
+    st.header("Start")
+    start_mgrs = st.text_input("Start MGRS", value="35VLL2445309927", help="Stardi asukoht MGRS formaadis")
+    start_duration_min = st.number_input("Start kestus (min)", min_value=0, value=0, help="Aeg stardis enne liikumist")
+    start_movement_mode = st.selectbox("Start -> KP1 liikumisviis", ["tee", "varjatud"], index=0)
+
+input_tab, result_tab, map_tab, export_tab = st.tabs(["Sisendid", "Tulemused", "Kaart", "Eksport"])
+
+with input_tab:
+    st.subheader("Rada")
+    route_cols = st.columns([1, 1])
+    with route_cols[0]:
+        st.markdown("**Kontrollpunktid**")
+        control_points_df = st.data_editor(
+            DEFAULT_CONTROL_POINTS[[
+                "kp_id", "nimi", "mgrs",
+                "kestvus_ettevalmistus_min", "kestvus_uleanne_min",
+                "kestvus_tagasiside_min", "jarjekord",
+            ]],
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=True,
+            key="control_points_editor",
+            column_config={
+                "kp_id": st.column_config.NumberColumn("KP", min_value=1, step=1),
+                "nimi": st.column_config.TextColumn("Nimi"),
+                "mgrs": st.column_config.TextColumn("MGRS"),
+                "kestvus_ettevalmistus_min": st.column_config.NumberColumn("Ettevalmistus", min_value=0, step=1),
+                "kestvus_uleanne_min": st.column_config.NumberColumn("Ülesanne", min_value=0, step=1),
+                "kestvus_tagasiside_min": st.column_config.NumberColumn("Tagasiside", min_value=0, step=1),
+                "jarjekord": st.column_config.NumberColumn("Järjekord", min_value=1, step=1),
+            },
+        )
+
+    with route_cols[1]:
+        st.markdown("**Lõigud**")
+        segments_df = st.data_editor(
+            DEFAULT_SEGMENTS,
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=True,
+            key="segments_editor",
+            column_config={
+                "segment_id": st.column_config.NumberColumn("Lõik", min_value=1, step=1),
+                "algus_kp_id": st.column_config.NumberColumn("Algus KP", min_value=0, step=1),
+                "lopp_kp_id": st.column_config.NumberColumn("Lõpp KP", min_value=0, step=1),
+                "liikumisviis": st.column_config.SelectboxColumn("Liikumisviis", options=["tee", "varjatud"], required=True),
+            },
+        )
+
+    st.subheader("Kiirused")
+    speed_cols = st.columns([1, 1])
+    with speed_cols[0]:
+        st.dataframe(
+            pd.DataFrame([
+                {"Liikumisviis": "tee", "Päev (km/h)": DEFAULT_SPEEDS["tee"]["valge"], "Öö (km/h)": DEFAULT_SPEEDS["tee"]["pime"]},
+                {"Liikumisviis": "varjatud", "Päev (km/h)": DEFAULT_SPEEDS["varjatud"]["valge"], "Öö (km/h)": DEFAULT_SPEEDS["varjatud"]["pime"]},
+            ]),
+            width="stretch",
+            hide_index=True,
+        )
+    with speed_cols[1]:
+        overrides_df = st.data_editor(
+            pd.DataFrame(columns=["segment_id", "liikumiskiirus"]),
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=True,
+            key="overrides_editor",
+            column_config={
+                "segment_id": st.column_config.NumberColumn("Lõik", min_value=1, step=1),
+                "liikumiskiirus": st.column_config.NumberColumn("Kiirus (km/h)", min_value=0.1, step=0.1),
+            },
+        )
+
+    calculate = st.button("Arvuta rada", type="primary", width="stretch")
+
+    if calculate:
+        try:
+            race_config = {
+                "esimese_voistkonna_start": f"{start_date.isoformat()} {start_clock.strftime('%H:%M')}",
+                "voistkondade_arv": int(team_count),
+                "stardi_intervall_min": int(interval),
+                "nulltiimi_earlier_min": int(zero_early),
+                "voistluse_kuupaev": race_date.isoformat(),
+                "timezone": timezone,
+                "kasuta_automaatset_paikest": auto_sun,
+                "paeva_algus": day_start_time.strftime("%H:%M"),
+                "pimeduse_algus": dark_start_time.strftime("%H:%M"),
+            }
+
+            control_points_parsed = prepare_control_points(control_points_df)
+            segments_parsed = prepare_segments(segments_df, start_movement_mode)
+            overrides = prepare_overrides(overrides_df)
+
+            with st.spinner("Arvutan distantse, valgusolusid ja ajagraafikut..."):
+                results = run_full_simulation(
+                    control_points_parsed,
+                    segments_parsed,
+                    race_config,
+                    DEFAULT_SPEEDS,
+                    overrides,
+                    start_mgrs,
+                    start_duration_min,
+                )
+
+            st.session_state["results"] = results
+            st.success("Arvutus lõpetatud. Ava tulemuste või kaardi vahekaart.")
+        except Exception as e:
+            st.error(f"Arvutus ebaõnnestus: {e}")
+            st.info("Kontrolli, et MGRS väärtused, KP viited, kuupäevad ja numbrilised väljad oleksid korrektsed.")
+
+if "results" not in st.session_state:
+    with result_tab:
+        st.info("Sisesta raja andmed ja vajuta vahekaardil Sisendid nuppu Arvuta rada.")
+    with map_tab:
+        st.info("Kaart ilmub pärast arvutust.")
+    with export_tab:
+        st.info("Ekspordid ilmuvad pärast arvutust.")
+else:
+    results = st.session_state["results"]
+    cp_out, seg_out, starts_out, seg_res_out, cp_res_out, kp_load_out, cp_sync_out, sync_fig = format_output_tables(results)
+    class_summary = summarize_segment_classifications(results["segment_results"])
+
+    with result_tab:
+        overview_tab, segments_tab, checkpoints_tab, teams_tab, sync_tab = st.tabs([
+            "Ülevaade", "Lõigud", "Kontrollpunktid", "Võistkonnad", "Ajajoon",
+        ])
+
+        with overview_tab:
+            render_summary(results, seg_out, kp_load_out, class_summary)
+
+        with segments_tab:
+            segment_columns = [
+                "segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis",
+                "sirge_kaugus_km", "tee_kaugus_km", "kasutatav_kaugus_km",
+                "valgustingimused", "liikumiskiirus",
+                "liikumise aeg täpne (min)", "liikumise aeg ümardatud (min)",
+                "distance_note",
+            ]
+            st.dataframe(
+                rename_columns(seg_out[segment_columns], TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+            st.markdown("**Valgusklassifikatsioon võistkondade kaupa**")
+            st.dataframe(
+                rename_columns(class_summary, TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+
+        with checkpoints_tab:
+            st.markdown("**Kontrollpunktid**")
+            st.dataframe(
+                rename_columns(cp_out, TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+            st.markdown("**Koormus**")
+            st.dataframe(
+                rename_columns(kp_load_out, TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+            st.markdown("**KP ajad võistkondade kaupa**")
+            st.dataframe(
+                rename_columns(cp_res_out, TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+
+        with teams_tab:
+            st.markdown("**Stardiajad**")
+            st.dataframe(
+                rename_columns(starts_out, TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+            st.markdown("**Lõigutulemused**")
+            display_columns = [
+                "team_id", "segment_id", "algus_kp_id", "lopp_kp_id",
+                "start_time", "end_time", "distance_km",
+                "reaalne_valgustingimus", "chosen_light_condition",
+                "exact_minutes", "minutes_total",
+            ]
+            display_columns = [col for col in display_columns if col in seg_res_out.columns]
+            st.dataframe(
+                rename_columns(seg_res_out[display_columns], TABLE_LABELS),
+                width="stretch",
+                hide_index=True,
+            )
+
+        with sync_tab:
+            st.plotly_chart(sync_fig, width="stretch")
+
+    with map_tab:
+        st.subheader("Kaardivaade")
+        m = create_map(cp_out, results["segments"], results["checkpoint_results"], seg_res_out)
+        st_folium(m, width=1200, height=560)
+
+    with export_tab:
+        st.subheader("Ekspordi tulemused")
+        render_downloads(results)
