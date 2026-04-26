@@ -798,7 +798,8 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
         showgrid=True,
         gridwidth=1,
         gridcolor='lightgrey',
-        tickformat='%H:%M',
+        tickformat='%d.%m<br>%H:%M',
+        hoverformat='%d.%m.%Y %H:%M',
         range=[timeline_start, timeline_end],
         tick0=timeline_start,
         dtick=3600000,
@@ -844,10 +845,24 @@ def create_sync_diagram(checkpoint_results: pd.DataFrame, race_config: dict):
 
         if timeline_start <= sunrise <= timeline_end:
             fig.add_vline(x=sunrise, line=dict(color='goldenrod', width=2, dash='dash'))
-            fig.add_annotation(x=sunrise, y=-0.5, text='Päikesetõus', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+            fig.add_annotation(
+                x=sunrise,
+                y=-0.5,
+                text=f"Päikesetõus<br>{sunrise.strftime('%d.%m %H:%M')}",
+                showarrow=False,
+                yshift=-26,
+                font=dict(color='goldenrod', size=10),
+            )
         if timeline_start <= sunset <= timeline_end:
             fig.add_vline(x=sunset, line=dict(color='goldenrod', width=2, dash='dash'))
-            fig.add_annotation(x=sunset, y=-0.5, text='Päikeseloojang', showarrow=False, yshift=-20, font=dict(color='goldenrod'))
+            fig.add_annotation(
+                x=sunset,
+                y=-0.5,
+                text=f"Päikeseloojang<br>{sunset.strftime('%d.%m %H:%M')}",
+                showarrow=False,
+                yshift=-26,
+                font=dict(color='goldenrod', size=10),
+            )
 
         current_date += timedelta(days=1)
 

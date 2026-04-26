@@ -41,6 +41,11 @@ DEFAULT_CONTROL_POINTS = pd.DataFrame([
     {"kp_id": 4, "nimi": "KP4", "mgrs": "35VLL3479411624", "kestvus_ettevalmistus_min": 5, "kestvus_uleanne_min": 10, "kestvus_tagasiside_min": 5, "kestvus_min": 20, "jarjekord": 4},
 ])
 
+CONTROL_POINT_EDITOR_COLUMNS = [
+    "kustuta", "kp_id", "nimi", "mgrs",
+    "kestvus_ettevalmistus_min", "kestvus_uleanne_min", "kestvus_tagasiside_min",
+]
+
 # ======================================================
 # UI abifunktsioonid
 # ======================================================
@@ -96,12 +101,88 @@ def apply_default_durations(df: pd.DataFrame, preparation_min: int, task_min: in
     return df
 
 
+def make_control_point_name(kp_id: int) -> str:
+    return f"KP {kp_id}"
+
+
+def next_control_point_id(df: pd.DataFrame) -> int:
+    if df.empty or "kp_id" not in df.columns:
+        return 1
+    ids = pd.to_numeric(df["kp_id"], errors="coerce").dropna()
+    return int(ids.max()) + 1 if not ids.empty else 1
+
+
+def create_control_point_row(df: pd.DataFrame, preparation_min: int, task_min: int, feedback_min: int) -> dict:
+    kp_id = next_control_point_id(df)
+    return {
+        "kustuta": False,
+        "kp_id": kp_id,
+        "nimi": make_control_point_name(kp_id),
+        "mgrs": "",
+        "kestvus_ettevalmistus_min": preparation_min,
+        "kestvus_uleanne_min": task_min,
+        "kestvus_tagasiside_min": feedback_min,
+    }
+
+
+def normalize_control_point_input(df: pd.DataFrame, preparation_min: int, task_min: int, feedback_min: int) -> pd.DataFrame:
+    df = df.copy()
+    for column in CONTROL_POINT_EDITOR_COLUMNS:
+        if column not in df.columns:
+            df[column] = False if column == "kustuta" else None
+
+    df = df[CONTROL_POINT_EDITOR_COLUMNS]
+    df = df[df["kp_id"].notna() | df["nimi"].notna() | df["mgrs"].notna()].copy()
+    if "kustuta" in df.columns:
+        df = df[~df["kustuta"].fillna(False).astype(bool)].copy()
+
+    used_ids = set()
+    next_id = 1
+    defaults = {
+        "kestvus_ettevalmistus_min": preparation_min,
+        "kestvus_uleanne_min": task_min,
+        "kestvus_tagasiside_min": feedback_min,
+    }
+
+    for index in df.index:
+        current_id = pd.to_numeric(pd.Series([df.at[index, "kp_id"]]), errors="coerce").iloc[0]
+        if pd.isna(current_id) or int(current_id) in used_ids:
+            while next_id in used_ids:
+                next_id += 1
+            current_id = next_id
+        current_id = int(current_id)
+        used_ids.add(current_id)
+        df.at[index, "kp_id"] = current_id
+
+        if pd.isna(df.at[index, "nimi"]) or str(df.at[index, "nimi"]).strip() == "":
+            df.at[index, "nimi"] = make_control_point_name(current_id)
+
+        for column, default_value in defaults.items():
+            value = pd.to_numeric(pd.Series([df.at[index, column]]), errors="coerce").iloc[0]
+            df.at[index, column] = default_value if pd.isna(value) else int(value)
+
+    df["kustuta"] = False
+    return df.reset_index(drop=True)
+
+
+def build_control_point_editor_base(preparation_min: int, task_min: int, feedback_min: int) -> pd.DataFrame:
+    control_points = apply_default_durations(
+        DEFAULT_CONTROL_POINTS[["kp_id", "nimi", "mgrs"]],
+        preparation_min,
+        task_min,
+        feedback_min,
+    )
+    control_points.insert(0, "kustuta", False)
+    return normalize_control_point_input(control_points, preparation_min, task_min, feedback_min)
+
+
 def build_segments_from_control_points(control_points: pd.DataFrame, start_movement_mode: str) -> pd.DataFrame:
     cp = control_points.copy()
     if cp.empty or "kp_id" not in cp.columns:
         return pd.DataFrame(columns=["segment_id", "algus_kp_id", "lopp_kp_id", "liikumisviis"])
 
     cp = cp.dropna(subset=["kp_id"]).reset_index(drop=True)
+    cp_names = {int(row["kp_id"]): row.get("nimi", make_control_point_name(int(row["kp_id"]))) for _, row in cp.iterrows()}
     rows = []
     previous_kp_id = 0
     for index, row in cp.iterrows():
@@ -112,6 +193,8 @@ def build_segments_from_control_points(control_points: pd.DataFrame, start_movem
             "segment_id": segment_id,
             "algus_kp_id": previous_kp_id,
             "lopp_kp_id": current_kp_id,
+            "algus_kp_nimi": "Start" if previous_kp_id == 0 else cp_names.get(previous_kp_id, make_control_point_name(previous_kp_id)),
+            "lopp_kp_nimi": cp_names.get(current_kp_id, make_control_point_name(current_kp_id)),
             "liikumisviis": mode,
         })
         previous_kp_id = current_kp_id
@@ -317,21 +400,42 @@ with input_tab:
     default_feedback_min = duration_cols[2].number_input("Vaikimisi tagasiside (min)", min_value=0, value=5)
 
     st.markdown("**Kontrollpunktid**")
-    control_points_base = apply_default_durations(
-        DEFAULT_CONTROL_POINTS[[
-            "kp_id", "nimi", "mgrs",
-        ]],
-        default_preparation_min,
-        default_task_min,
-        default_feedback_min,
-    )
+    if "control_points_input" not in st.session_state:
+        st.session_state["control_points_input"] = build_control_point_editor_base(
+            default_preparation_min,
+            default_task_min,
+            default_feedback_min,
+        )
+    if "control_points_editor_version" not in st.session_state:
+        st.session_state["control_points_editor_version"] = 1
+
+    if st.button("+ Lisa kontrollpunkt"):
+        new_row = create_control_point_row(
+            st.session_state["control_points_input"],
+            default_preparation_min,
+            default_task_min,
+            default_feedback_min,
+        )
+        st.session_state["control_points_input"] = pd.concat(
+            [st.session_state["control_points_input"], pd.DataFrame([new_row])],
+            ignore_index=True,
+        )
+        st.session_state["control_points_editor_version"] += 1
+        st.rerun()
+
     control_points_df = st.data_editor(
-        control_points_base,
+        normalize_control_point_input(
+            st.session_state["control_points_input"],
+            default_preparation_min,
+            default_task_min,
+            default_feedback_min,
+        ),
         num_rows="dynamic",
         width="stretch",
         hide_index=True,
-        key="control_points_editor_v2",
+        key=f"control_points_editor_v{st.session_state['control_points_editor_version']}",
         column_config={
+            "kustuta": st.column_config.CheckboxColumn("Kustuta"),
             "kp_id": st.column_config.NumberColumn("KP", min_value=1, step=1),
             "nimi": st.column_config.TextColumn("Nimi"),
             "mgrs": st.column_config.TextColumn("MGRS"),
@@ -340,9 +444,19 @@ with input_tab:
             "kestvus_tagasiside_min": st.column_config.NumberColumn("Tagasiside", min_value=0, step=1),
         },
     )
+    normalized_control_points_df = normalize_control_point_input(
+        control_points_df,
+        default_preparation_min,
+        default_task_min,
+        default_feedback_min,
+    )
+    if not normalized_control_points_df.equals(st.session_state["control_points_input"].reset_index(drop=True)):
+        st.session_state["control_points_input"] = normalized_control_points_df
+        st.session_state["control_points_editor_version"] += 1
+        st.rerun()
 
     control_points_for_segments = apply_default_durations(
-        control_points_df,
+        normalized_control_points_df.drop(columns=["kustuta"], errors="ignore"),
         default_preparation_min,
         default_task_min,
         default_feedback_min,
@@ -356,14 +470,23 @@ with input_tab:
         width="stretch",
         hide_index=True,
         key="segments_editor_v2",
-        disabled=["segment_id", "algus_kp_id", "lopp_kp_id"],
+        disabled=["segment_id", "algus_kp_id", "lopp_kp_id", "algus_kp_nimi", "lopp_kp_nimi"],
+        column_order=["segment_id", "algus_kp_nimi", "lopp_kp_nimi", "liikumisviis"],
         column_config={
             "segment_id": st.column_config.NumberColumn("Lõik"),
-            "algus_kp_id": st.column_config.NumberColumn("Algus KP"),
-            "lopp_kp_id": st.column_config.NumberColumn("Lõpp KP"),
+            "algus_kp_id": None,
+            "lopp_kp_id": None,
+            "algus_kp_nimi": st.column_config.TextColumn("Algus KP"),
+            "lopp_kp_nimi": st.column_config.TextColumn("Lõpp KP"),
             "liikumisviis": st.column_config.SelectboxColumn("Liikumisviis", options=["tee", "varjatud"], required=True),
         },
     )
+    segments_for_calculation = generated_segments.copy()
+    if {"segment_id", "liikumisviis"}.issubset(segments_df.columns):
+        edited_modes = segments_df.set_index("segment_id")["liikumisviis"]
+        segments_for_calculation["liikumisviis"] = (
+            segments_for_calculation["segment_id"].map(edited_modes).fillna(segments_for_calculation["liikumisviis"])
+        )
 
     st.subheader("Kiirused")
     speed_cols = st.columns([1, 1])
@@ -407,13 +530,13 @@ with input_tab:
 
             control_points_parsed = prepare_control_points(
                 apply_default_durations(
-                    control_points_df,
+                    normalized_control_points_df.drop(columns=["kustuta"], errors="ignore"),
                     default_preparation_min,
                     default_task_min,
                     default_feedback_min,
                 )
             )
-            segments_parsed = prepare_segments(segments_df)
+            segments_parsed = prepare_segments(segments_for_calculation)
             overrides = prepare_overrides(overrides_df)
 
             with st.spinner("Arvutan distantse, valgusolusid ja ajagraafikut..."):
